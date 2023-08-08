@@ -13,41 +13,34 @@ pub type Null = ();
 pub type Id = usize;
 pub type PendingCount = i32;
 
-pub trait _ValueTrait {
+pub trait _IntValueTrait {
     fn id(&self) -> Id;
     fn add_next(&mut self, link: WeakLink);
-    fn clean(&mut self);
 }
 
-pub type Value = Rc<RefCell<dyn _ValueTrait>>;
+pub trait _ExtValueTrait {
+    fn id(&self) -> Id;
+    fn clean(&self);
+}
 
-pub trait _UpgradeValue {
+pub type Value = Rc<RefCell<dyn _IntValueTrait>>;
+
+/// Helper method for implementing `inputs` in `LinkCb`.
+pub trait UpgradeValue {
     fn upgrade_as_value(&self) -> Option<Value>;
-}
-
-impl<T: _ValueTrait + 'static> _UpgradeValue for Rc<RefCell<T>> {
-    fn upgrade_as_value(&self) -> Option<Value> {
-        return Some(self.clone() as Value);
-    }
-}
-
-impl<T: _ValueTrait + 'static> _UpgradeValue for Weak<RefCell<T>> {
-    fn upgrade_as_value(&self) -> Option<Value> {
-        return self.upgrade().map(|x| x as Value);
-    }
 }
 
 pub trait LinkCb<V> {
     /// Called when all dirty inputs (dependencies, per `inputs`) have been processed,
     /// if there's at least one dirty input.  Should update `output` based on inputs.
-    fn call(&self, ctx: &mut EventProcessingContext, output: &Rc<RefCell<V>>);
+    fn call(&self, ctx: &mut EventProcessingContext, output: &V);
 
     /// Returns inputs (as `Value` trait for generic processing).
     fn inputs(&self) -> Vec<Value>;
 }
 
-struct _Link<V: _ValueTrait> {
-    value: Rc<RefCell<V>>,
+struct _Link<V: _ExtValueTrait> {
+    value: V,
     inner: Box<dyn LinkCb<V>>,
     pending_inputs: PendingCount,
 }
@@ -62,7 +55,7 @@ pub trait _LinkTrait {
     fn dec_prev_pending(&mut self) -> PendingCount;
 }
 
-impl<V: _ValueTrait> _LinkTrait for _Link<V> {
+impl<V: _ExtValueTrait> _LinkTrait for _Link<V> {
     fn process(&mut self, ctx: &mut EventProcessingContext) {
         self.inner.call(ctx, &self.value);
     }
@@ -72,12 +65,12 @@ impl<V: _ValueTrait> _LinkTrait for _Link<V> {
     }
 
     fn id(&self) -> Id {
-        return self.value.borrow().id();
+        return self.value.id();
     }
 
     fn clean(&mut self) {
         self.pending_inputs = self.prev().len() as PendingCount;
-        self.value.borrow_mut().clean();
+        self.value.clean();
     }
 
     fn get_prev_pending(&mut self) -> PendingCount {
@@ -97,11 +90,15 @@ impl<V: _ValueTrait> _LinkTrait for _Link<V> {
 pub type Link = Rc<RefCell<dyn _LinkTrait>>;
 pub type WeakLink = Weak<RefCell<dyn _LinkTrait>>;
 
+/// Create a link with the given `LinkCb` processor and output `value`.  The link
+/// will be scheduled to be updated once the current `EventContext` event function
+/// invocation ends.
+#[must_use]
 pub fn new_link<
-    V: _ValueTrait + 'static,
->(ctx: &mut EventProcessingContext, value: Rc<RefCell<V>>, inner: impl LinkCb<V> + 'static) -> Link {
+    V: _ExtValueTrait + 'static,
+>(ctx: &mut EventProcessingContext, value: V, inner: impl LinkCb<V> + 'static) -> Link {
     let pending = inner.inputs().len() as PendingCount;
-    let id = value.borrow().id();
+    let id = value.id();
     let out = Rc::new(RefCell::new(_Link {
         value: value,
         inner: Box::new(inner),
@@ -132,6 +129,7 @@ impl _Context {
 #[derive(Clone)]
 pub struct EventContext(Rc<RefCell<_Context>>);
 
+/// Context used during event processing.
 pub struct EventProcessingContext<'a>(pub(crate) &'a EventContext, pub(crate) &'a mut _Context);
 
 impl EventContext {

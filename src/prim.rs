@@ -2,24 +2,31 @@ use std::{
     mem::swap,
     rc::{
         Rc,
+        Weak,
     },
-    cell::RefCell,
+    cell::{
+        RefCell,
+        Ref,
+    },
 };
 use crate::core::{
     Id,
     WeakLink,
-    _ValueTrait,
+    _IntValueTrait,
     EventProcessingContext,
+    _ExtValueTrait,
+    UpgradeValue,
+    Value,
 };
 
-pub struct Prim<T: PartialEq + Clone> {
+pub struct _Prim<T: PartialEq + Clone> {
     id: Id,
     value: T,
     previous_value: Option<T>,
     next: Vec<WeakLink>,
 }
 
-impl<T: PartialEq + Clone> _ValueTrait for Prim<T> {
+impl<T: PartialEq + Clone> _IntValueTrait for _Prim<T> {
     fn id(&self) -> Id {
         return self.id;
     }
@@ -27,26 +34,49 @@ impl<T: PartialEq + Clone> _ValueTrait for Prim<T> {
     fn add_next(&mut self, link: WeakLink) {
         self.next.push(link);
     }
-
-    fn clean(&mut self) {
-        self.previous_value = None;
-    }
 }
 
-impl<T: PartialEq + Clone> Prim<T> {
+impl<T: PartialEq + Clone> _Prim<T> {
     pub fn get(&self) -> &T {
         return &self.value;
     }
+}
 
-    pub fn set(&mut self, ctx: &mut EventProcessingContext, mut value: T) {
-        if self.value == value {
+#[derive(Clone)]
+pub struct Prim<T: PartialEq + Clone>(Rc<RefCell<_Prim<T>>>);
+
+#[derive(Clone)]
+pub struct WeakPrim<T: PartialEq + Clone>(Weak<RefCell<_Prim<T>>>);
+
+pub fn new_prim<T: PartialEq + Clone>(ctx: &mut EventProcessingContext, initial: T) -> Prim<T> {
+    return Prim(Rc::new(RefCell::new(_Prim {
+        id: ctx.1.take_id(),
+        value: initial,
+        previous_value: None,
+        next: vec![],
+    })));
+}
+
+impl<T: PartialEq + Clone + 'static> Prim<T> {
+    pub fn weak(&self) -> WeakPrim<T> {
+        return WeakPrim(Rc::downgrade(&self.0));
+    }
+
+    /// Modify the value and mark downstream links as needing to be rerun.
+    pub fn set(&self, ctx: &mut EventProcessingContext, mut value: T) {
+        let mut self2 = self.0.as_ref().borrow_mut();
+        if self2.value == value {
             return;
         }
-        swap(&mut self.value, &mut value);
-        let first_change = self.previous_value.is_none();
-        self.previous_value = Some(value);
+        swap(&mut self2.value, &mut value);
+        let first_change = self2.previous_value.is_none();
+        self2.previous_value = Some(value);
         if first_change {
-            self.next.retain_mut(|d| {
+            ctx.1.processed.insert(self2.id, Box::new({
+                let s = self.clone();
+                move || s.clean()
+            }));
+            self2.next.retain_mut(|d| {
                 let Some(d) = d.upgrade() else {
                     return false;
                 };
@@ -62,13 +92,37 @@ impl<T: PartialEq + Clone> Prim<T> {
             });
         }
     }
+
+    /// Immutable access to the data.
+    pub fn borrow<'a>(&'a self) -> Ref<'a, _Prim<T>> {
+        return self.0.as_ref().borrow();
+    }
 }
 
-pub fn new_prim<T: PartialEq + Clone>(ctx: &mut EventProcessingContext, initial: T) -> Rc<RefCell<Prim<T>>> {
-    return Rc::new(RefCell::new(Prim {
-        id: ctx.1.take_id(),
-        value: initial,
-        previous_value: None,
-        next: vec![],
-    }));
+impl<T: PartialEq + Clone + 'static> _ExtValueTrait for Prim<T> {
+    fn id(&self) -> Id {
+        return self.0.borrow().id;
+    }
+
+    fn clean(&self) {
+        self.0.borrow_mut().previous_value = None;
+    }
+}
+
+impl<T: PartialEq + Clone + 'static> UpgradeValue for Prim<T> {
+    fn upgrade_as_value(&self) -> Option<Value> {
+        return Some(self.0.clone() as Value);
+    }
+}
+
+impl<T: PartialEq + Clone + 'static> WeakPrim<T> {
+    pub fn upgrade(&self) -> Option<Prim<T>> {
+        return Some(Prim(self.0.upgrade()?));
+    }
+}
+
+impl<T: PartialEq + Clone + 'static> UpgradeValue for WeakPrim<T> {
+    fn upgrade_as_value(&self) -> Option<Value> {
+        return self.0.upgrade().map(|x| x as Value);
+    }
 }

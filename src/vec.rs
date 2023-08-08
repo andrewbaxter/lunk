@@ -1,14 +1,21 @@
 use std::{
     rc::{
         Rc,
+        Weak,
     },
-    cell::RefCell,
+    cell::{
+        RefCell,
+        Ref,
+    },
 };
 use crate::core::{
     Id,
     WeakLink,
-    _ValueTrait,
+    _IntValueTrait,
     EventProcessingContext,
+    _ExtValueTrait,
+    UpgradeValue,
+    Value,
 };
 
 pub struct Change<T: Clone> {
@@ -17,16 +24,28 @@ pub struct Change<T: Clone> {
     pub add: std::vec::Vec<T>,
 }
 
-pub struct Vec<T: Clone> {
+pub struct _Vec<T: Clone> {
     id: Id,
     value: std::vec::Vec<T>,
     changes: std::vec::Vec<Change<T>>,
     next: std::vec::Vec<WeakLink>,
 }
 
-impl<T: Clone> Vec<T> {
-    pub fn splice(
+impl<T: Clone + 'static> _Vec<T> {
+    /// The current state of this vec.
+    pub fn value(&self) -> &std::vec::Vec<T> {
+        return &self.value;
+    }
+
+    /// Any changes during the current event handling that occurred to value to get it
+    /// to its current state.
+    pub fn changes(&self) -> &std::vec::Vec<Change<T>> {
+        return &self.changes;
+    }
+
+    fn splice(
         &mut self,
+        self2: &Vec<T>,
         ctx: &mut EventProcessingContext,
         offset: usize,
         remove: usize,
@@ -41,14 +60,14 @@ impl<T: Clone> Vec<T> {
         });
         if first_change {
             ctx.1.processed.insert(self.id, Box::new({
-                let s = self.clone();
+                let s = self2.clone();
                 move || s.clean()
             }));
             self.next.retain_mut(|d| {
                 let Some(d) = d.upgrade() else {
                     return false;
                 };
-                let id = d.borrow().id();
+                let id = d.as_ref().borrow().id();
                 if ctx.1.processed.contains_key(&id) {
                     return true;
                 }
@@ -61,25 +80,9 @@ impl<T: Clone> Vec<T> {
         }
         return out;
     }
-
-    pub fn clear(&mut self, ctx: &mut EventProcessingContext) {
-        let len = self.value.len();
-        self.splice(ctx, 0, len, vec![]);
-    }
-
-    /// The current state of this vec.
-    pub fn value(&self) -> &std::vec::Vec<T> {
-        return &self.value;
-    }
-
-    /// Any changes during the current event handling that occurred to value to get it
-    /// to its current state.
-    pub fn changes(&self) -> &std::vec::Vec<Change<T>> {
-        return &self.changes;
-    }
 }
 
-impl<T: Clone> _ValueTrait for Vec<T> {
+impl<T: Clone> _IntValueTrait for _Vec<T> {
     fn id(&self) -> Id {
         return self.id;
     }
@@ -87,17 +90,76 @@ impl<T: Clone> _ValueTrait for Vec<T> {
     fn add_next(&mut self, link: WeakLink) {
         self.next.push(link);
     }
-
-    fn clean(&mut self) {
-        self.changes.clear();
-    }
 }
 
-pub fn new_vec<T: Clone>(ctx: &mut EventProcessingContext, initial: std::vec::Vec<T>) -> Rc<RefCell<Vec<T>>> {
-    return Rc::new(RefCell::new(Vec {
+#[derive(Clone)]
+pub struct Vec<T: Clone>(Rc<RefCell<_Vec<T>>>);
+
+#[derive(Clone)]
+pub struct WeakVec<T: Clone>(Weak<RefCell<_Vec<T>>>);
+
+pub fn new_vec<T: Clone + 'static>(ctx: &mut EventProcessingContext, initial: std::vec::Vec<T>) -> Vec<T> {
+    return Vec(Rc::new(RefCell::new(_Vec {
         id: ctx.1.take_id(),
         value: initial,
         changes: vec![],
         next: vec![],
-    }));
+    })));
+}
+
+impl<T: Clone + 'static> Vec<T> {
+    pub fn weak(&self) -> WeakVec<T> {
+        return WeakVec(Rc::downgrade(&self.0));
+    }
+
+    /// Modify the value and mark downstream links as needing to be rerun.
+    pub fn splice(
+        &self,
+        ctx: &mut EventProcessingContext,
+        offset: usize,
+        remove: usize,
+        add: std::vec::Vec<T>,
+    ) -> std::vec::Vec<T> {
+        return self.0.as_ref().borrow_mut().splice(&self, ctx, offset, remove, add);
+    }
+
+    /// Clears the collection, triggering updates.
+    pub fn clear(&self, ctx: &mut EventProcessingContext) {
+        let mut self2 = self.0.as_ref().borrow_mut();
+        let len = self2.value.len();
+        self2.splice(&self, ctx, 0, len, vec![]);
+    }
+
+    /// Immutable access to the collection.
+    pub fn borrow<'a>(&'a self) -> Ref<'a, _Vec<T>> {
+        return self.0.as_ref().borrow();
+    }
+}
+
+impl<T: Clone + 'static> _ExtValueTrait for Vec<T> {
+    fn id(&self) -> Id {
+        return self.0.borrow().id;
+    }
+
+    fn clean(&self) {
+        self.0.borrow_mut().changes.clear();
+    }
+}
+
+impl<T: Clone + 'static> UpgradeValue for Vec<T> {
+    fn upgrade_as_value(&self) -> Option<Value> {
+        return Some(self.0.clone() as Value);
+    }
+}
+
+impl<T: Clone + 'static> WeakVec<T> {
+    pub fn upgrade(&self) -> Option<Vec<T>> {
+        return Some(Vec(self.0.upgrade()?));
+    }
+}
+
+impl<T: Clone + 'static> UpgradeValue for WeakVec<T> {
+    fn upgrade_as_value(&self) -> Option<Value> {
+        return self.0.upgrade().map(|x| x as Value);
+    }
 }
