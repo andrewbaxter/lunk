@@ -1,8 +1,8 @@
-This is an event graph processing library.
+Lunk is an event graph processing library.
 
-The expected use case is user interfaces, where user events can set of cascades of changes to the view. Specifically, WASM/web user interfaces (since it's primarily single threaded) but this could also reasonably be used with other single-threaded UI libraries like Gtk.
+The expected use case is user interfaces, where user events (clicks, typing) can set off cascades of other changes and computation. Specifically, WASM/web user interfaces (since it's single threaded) but this could also reasonably be used with other single-threaded UI libraries like Gtk.
 
-Most web frameworks include their own event graph processing tools: Sycamore has signals, Dioxus and others have similar tools. This is a standalone tool, for use without a framework (i.e. with Gloo and other a la carte tools).
+Most web UI frameworks include their own event graph processing tools: Sycamore has signals, Dioxus and others have similar. This is a standalone tool, for use without a framework (i.e. with Gloo and other a la carte tools).
 
 Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance.
 
@@ -10,29 +10,53 @@ Compared to other tools, this library focuses on ease of use, flexibility, and c
 - Data has simple, lifetime-less types (`Prim<i32>`, `vec::Vec<i32>`, etc) which makes it simple to pass around and store in structures
 - Handles graph modifications during graph processing - new nodes will be processed after their dependencies
 - A macro for generating links, but implementing it by hand requires minimal boilerplate
+- Animation
 
 This only handles synchronous graph processing at the moment. Asynchronous events are not handled.
 
-State: MVP
+Status: MVP
 
 # Usage
 
 ## Basic usage
 
-1. Create an `EventContext` `ec`
-2. Call `ec.event(|ctx| { })`. All events and program initialization should be done within `ec.event`. `ec.event` waits until the callback ends and then processes the dirty graph. Creating new links triggers event processing, which is why even initialization should be done in this context.
-3. Within the event context, create values with `lunk::new_prim()` and `lunk::new_vec()`. Create links with `link!()`.
+1. Create an `EventGraph` `eg`
+2. Call `eg.event(|pc| { })`. All events and program initialization should be done within `eg.event`. `eg.event` waits until the callback ends and then processes the dirty graph. Creating new links triggers event processing, which is why even initialization should be done in this context.
+3. Within the event context, create values with `lunk::new_prim()` and `lunk::new_vec()`. Create links with `lunk::link!()`.
 4. Modify data values using the associated methods to trigger cascading updates. Note that any newly created links will also always be run during the event processing in the event they were created.
+
+An example helps:
+
+```rust
+fn graph_stuff() {
+    let ec = EventGraph::new();
+    let (_a, b, _link) = ec.event(|ctx| {
+        let a = lunk::new_prim(ctx, 0i32);
+        let b = lunk::new_prim(ctx, 0i32);
+        let _link = lunk::link!((
+            ctx = ctx,
+            output: lunk::Prim<i32> = b;
+            a = a.weak();
+        ) {
+            let a = a.upgrade()?;
+            output.set(ctx, a.borrow().get() + 5);
+        });
+        a.set(ctx, 46);
+        return (a, b, _link);
+    });
+    assert_eq!(*b.borrow().get(), 51);
+}
+```
 
 ## Linking things
 
 The basic way to link things is to implement `LinkCb` on a struct and then instantiate the link with `new_link`.
 
-I'd recommend using the macro though. I'm not a fan of macros, but I think this macro is fairly un-surprising and saves a bit of boilerplate.
+There's a macro to automate this: `link!`, which I'd recommend. I'm not a fan of macros, but I think this macro is fairly un-surprising and saves a bit of boilerplate.
 
 The `link!` macro looks kind of like a function signature, but where the arguments are separated into three segments with `;`.
 
-```
+```rust
 let _link = link!((ctx1 = ctx2, output: DTYPE = output1; a=a1, ...; b=b1, ...) {
     let a = a.upgrade()?;
     let b = b.upgrade()?;
@@ -40,11 +64,11 @@ let _link = link!((ctx1 = ctx2, output: DTYPE = output1; a=a1, ...; b=b1, ...) {
 })
 ```
 
-The first argument section has fixed elements:
+The first argument segment has fixed elements:
 
 - `ctx1` is the name of the context binding in the context of the link callback,
-  and `ctx2` is the `EventProcessingContext` in the current scope used for setting
-  up the link. This is provided within an invocation of `EventContext`'s `event()`.
+  and `ctx2` is the `ProcessingContext` in the current scope used for setting
+  up the link. This is provided within an invocation of `EventGraph`'s `event()`.
   The `=` here is inappropriate, `ctx1` and `ctx2` are separate values, I just used
   it to be consistent with the rest of the macro.
 - Capture `output1` from the current scope and use it as the output of the link activation function. It will be available with the name `output` in the link callback, where the code can modify it. It must have a type of `DTYPE` -- the macro can't infer this so you need to specify it manually.
@@ -73,27 +97,40 @@ This means that in general cycles won't lead to memory leaks, but if a link gets
 
 I recommend storing links and data scoped to their associated view components, so that when those components are removed the corresponding links and data values also get dropped.
 
+## Animation
+
+To animate primitive values just create an `Animator` and call `set_ease` on the primitive instead of `set`. `set_ease` requires an easing function - the crate `ezing` looks complete and should be easy to use I think.
+
+```
+my_prim.set_ease(animator.borrow_mut(), 44.3, 0.3, ezing::linear_inout);
+```
+
+Then regularly call
+
+```
+animator.borrow_mut().update(eg, delta_s);
+```
+
+to step the animation (`delta_s` is seconds since the last update).
+
+Any value that implements `Mult` `Add` and `Sub` can be eased like this.
+
+You can create your own custom animations by implementing `PrimAnimation` and calling `animator.start(MyPrimAnimation{...})`.
+
+# Why flexibility over performance
+
+The main gains from these libraries come from helping you avoid costly work. The more flexible, the more work it'll help you avoid.
+
+For work it doesn't avoid, it's still fast: it's written in Rust, the time spent doing graph processing is miniscule compared to FFI calls, styling, layout, rendering in a web environment.
+
+Despite performance not being a focus, it's actually very fast! I tried integrating it into <https://github.com/krausest/js-framework-benchmark> and got good performance: 746ms vs 796ms for Sycamore (!)
+
+(I don't quite believe this is faster than Sycamore:)
+
+- There may be some randomness in the benchmark, it's a browser after all
+- Some of the difference may be due to non-event-graph things, like element creation (direct `rooting` manipulation vs Sycamore's JSX-like system)
+
 # Design decisions
-
-## Usability, not performance
-
-### It's fast
-
-It's not optimized, but it's not slow. It's written in Rust, and it's computationally simple. I hooked it up to <https://github.com/krausest/js-framework-benchmark> and on my computer creating 10k rows took 850ms (in Rust + FFI) vs Sycamore's 750ms (in Rust + FFI). Most of the time in both was spent in FFI calls (creating elements, inserting elements, modifying element attributes, etc), not in graph processing.
-
-Edit: I ran it again and got 795ms for both. There was a GC pause I saw last time gone this time. I don't actually think this is as fast as Sycamore, it might have been GC luck, but the point stands that it's decently fast as it is.
-
-### Rendering is slow
-
-In the above benchmark, creating 10k rows took 4.5s overall, of which 800ms was rust code, the rest was rendering. The rest was browser rendering and layout.
-
-### Macro optimization not micro optimization
-
-The goal of event graph processing is to avoid expensive updates or recomputations. Graph processing should always be a small part of the total computational time - a few ms more or less doesn't really matter if the large calculations can be avoided.
-
-### Optimizations impede usability
-
-Things like region allocation often require very specific idioms. If your use case doesn't map well to these idioms, you could end up with harder to implement, maintain, or even less performant code.
 
 ## Separate links and data values
 
@@ -106,3 +143,11 @@ This also supports many configurations with only a few functions/macros: value t
 The macro lacks the ability to detect the output type where it's needed.
 
 I could have used template magic to infer the type, but this would have made manual (macro-less) link implementations need more boilerplate, so I decided against it. The types are fairly simple so I don't think it's a huge downside.
+
+## Animations as a separate structure
+
+In true a la carte philosophy, I figured some people might not want animations and it wasn't hard to make entirely separate.
+
+I think bundling the animator with the processing context shouldn't be too hard.
+
+In case there are other similar extensions, having a solution that allows external extension is important (maybe this won't happen though, then I may go ahead and integrate it).

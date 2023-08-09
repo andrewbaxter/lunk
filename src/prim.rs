@@ -13,7 +13,7 @@ use crate::core::{
     Id,
     WeakLink,
     _IntValueTrait,
-    EventProcessingContext,
+    ProcessingContext,
     _ExtValueTrait,
     UpgradeValue,
     Value,
@@ -36,19 +36,19 @@ impl<T: PartialEq + Clone> _IntValueTrait for _Prim<T> {
     }
 }
 
-impl<T: PartialEq + Clone> _Prim<T> {
+impl<T: PartialEq + Clone + 'static> _Prim<T> {
     pub fn get(&self) -> &T {
         return &self.value;
     }
 }
 
 #[derive(Clone)]
-pub struct Prim<T: PartialEq + Clone>(Rc<RefCell<_Prim<T>>>);
+pub struct Prim<T: PartialEq + Clone>(pub(crate) Rc<RefCell<_Prim<T>>>);
 
 #[derive(Clone)]
 pub struct WeakPrim<T: PartialEq + Clone>(Weak<RefCell<_Prim<T>>>);
 
-pub fn new_prim<T: PartialEq + Clone>(ctx: &mut EventProcessingContext, initial: T) -> Prim<T> {
+pub fn new_prim<T: PartialEq + Clone>(ctx: &mut ProcessingContext, initial: T) -> Prim<T> {
     return Prim(Rc::new(RefCell::new(_Prim {
         id: ctx.1.take_id(),
         value: initial,
@@ -63,7 +63,7 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
     }
 
     /// Modify the value and mark downstream links as needing to be rerun.
-    pub fn set(&self, ctx: &mut EventProcessingContext, mut value: T) {
+    pub fn set(&self, ctx: &mut ProcessingContext, mut value: T) {
         let mut self2 = self.0.as_ref().borrow_mut();
         if self2.value == value {
             return;

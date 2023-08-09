@@ -12,7 +12,7 @@ use crate::core::{
     Id,
     WeakLink,
     _IntValueTrait,
-    EventProcessingContext,
+    ProcessingContext,
     _ExtValueTrait,
     UpgradeValue,
     Value,
@@ -46,7 +46,7 @@ impl<T: Clone + 'static> _Vec<T> {
     fn splice(
         &mut self,
         self2: &Vec<T>,
-        ctx: &mut EventProcessingContext,
+        ctx: &mut ProcessingContext,
         offset: usize,
         remove: usize,
         add: std::vec::Vec<T>,
@@ -98,7 +98,7 @@ pub struct Vec<T: Clone>(Rc<RefCell<_Vec<T>>>);
 #[derive(Clone)]
 pub struct WeakVec<T: Clone>(Weak<RefCell<_Vec<T>>>);
 
-pub fn new_vec<T: Clone + 'static>(ctx: &mut EventProcessingContext, initial: std::vec::Vec<T>) -> Vec<T> {
+pub fn new_vec<T: Clone + 'static>(ctx: &mut ProcessingContext, initial: std::vec::Vec<T>) -> Vec<T> {
     return Vec(Rc::new(RefCell::new(_Vec {
         id: ctx.1.take_id(),
         value: initial,
@@ -115,7 +115,7 @@ impl<T: Clone + 'static> Vec<T> {
     /// Modify the value and mark downstream links as needing to be rerun.
     pub fn splice(
         &self,
-        ctx: &mut EventProcessingContext,
+        ctx: &mut ProcessingContext,
         offset: usize,
         remove: usize,
         add: std::vec::Vec<T>,
@@ -124,7 +124,7 @@ impl<T: Clone + 'static> Vec<T> {
     }
 
     /// Clears the collection, triggering updates.
-    pub fn clear(&self, ctx: &mut EventProcessingContext) {
+    pub fn clear(&self, ctx: &mut ProcessingContext) {
         let mut self2 = self.0.as_ref().borrow_mut();
         let len = self2.value.len();
         self2.splice(&self, ctx, 0, len, vec![]);

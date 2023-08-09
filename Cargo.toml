@@ -8,5 +8,4 @@ repository = "https://github.com/andrewbaxter/lunk"
 readme = "readme.md"
 
 [dependencies]
-gensym = "0.1.0"
 paste = "1.0.14"

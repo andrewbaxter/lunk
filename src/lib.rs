@@ -1,12 +1,13 @@
 pub mod core;
 pub mod prim;
 pub mod vec;
+pub mod animate;
 
 pub use crate::core::{
     new_link,
     LinkCb,
-    EventContext,
-    EventProcessingContext,
+    EventGraph,
+    ProcessingContext,
 };
 pub use prim::{
     Prim,
@@ -16,13 +17,17 @@ pub use vec::{
     Vec,
     new_vec,
 };
+pub use animate::{
+    Animator,
+    PrimEaseExt,
+};
 pub use paste;
 
 #[macro_export]
 macro_rules! link{
     (
         (
-            $ctxname: ident = $ctxval: expr,
+            $pcname: ident = $pcval: expr,
             $outputname: ident: $outputtype: ty = $outputval: expr;
             $($vname: ident = $vval: expr),
             * $(,) ?;
@@ -48,7 +53,7 @@ macro_rules! link{
                     $([< _ $name >]:[< _ $name: upper >],) * 
                     //. x
                     f: fn(
-                        & mut $crate:: core:: EventProcessingContext,
+                        & mut $crate:: core:: ProcessingContext,
                         & $outputtype,
                         $(&[< _ $vname: upper >],) * $(&[< _ $name: upper >],) *
                     ) -> Option <() >,
@@ -69,8 +74,8 @@ macro_rules! link{
                 $([< _ $name: upper >],) *
                 //. _
                 > {
-                    fn call(&self, ctx:& mut $crate:: core:: EventProcessingContext, output:& $outputtype) {
-                        (self.f)(ctx, output, $(& self.[< _ $vname >],) * $(& self.[< _ $name >],) *);
+                    fn call(&self, pc:& mut $crate:: core:: ProcessingContext, output:& $outputtype) {
+                        (self.f)(pc, output, $(& self.[< _ $vname >],) * $(& self.[< _ $name >],) *);
                     }
                     fn inputs(&self) -> std:: vec:: Vec < $crate:: core:: Value > {
                         return[
@@ -81,13 +86,13 @@ macro_rules! link{
                 // #
                 //
                 // INST
-                $crate:: core:: new_link($ctxval, $outputval.clone(), _Link {
+                $crate:: core:: new_link($pcval, $outputval.clone(), _Link {
                     //. x
                     $([< _ $vname >]: $vval,) * 
                     //. x
                     $([< _ $name >]: $val,) * 
                     //. x
-                    f:| $ctxname,
+                    f:| $pcname,
                     $outputname,
                     $($vname,) * $($name,) *|-> Option <() > {
                         $body;
@@ -99,7 +104,7 @@ macro_rules! link{
     };
     (
         (
-            $ctxname: ident = $ctxval: expr;
+            $pcname: ident = $pcval: expr;
             $($vname: ident = $vval: expr),
             * $(,) ?;
             $($name: ident = $val: expr),
@@ -107,10 +112,10 @@ macro_rules! link{
         ) $body: block
     ) => {
         {
-            let ctx =& mut * $ctxval;
-            let _out = $crate:: prim:: new_prim(ctx, ());
+            let pc =& mut * $pcval;
+            let _out = $crate:: prim:: new_prim(pc, ());
             $crate:: link !(
-                ($ctxname = ctx, _out: $crate:: prim:: Prim <() >= _out; $($vname = $vval), *; $($name = $val), *) {
+                ($pcname = pc, _out: $crate:: prim:: Prim <() >= _out; $($vname = $vval), *; $($name = $val), *) {
                     $body
                 }
             )
@@ -130,21 +135,21 @@ fn basic0() {
         },
     };
 
-    let ec = EventContext::new();
-    let (_a, b, _link) = ec.event(|ctx| {
-        let a = new_prim(ctx, 0);
-        let b = new_prim(ctx, 0);
+    let eg = EventGraph::new();
+    let (_a, b, _link) = eg.event(|pc| {
+        let a = new_prim(pc, 0);
+        let b = new_prim(pc, 0);
 
         struct LinkAB {
             a: WeakPrim<i32>,
         }
 
         impl LinkCb<Prim<i32>> for LinkAB {
-            fn call(&self, ctx: &mut EventProcessingContext, value: &Prim<i32>) {
+            fn call(&self, pc: &mut ProcessingContext, value: &Prim<i32>) {
                 let Some(a) = self.a.upgrade() else {
                     return;
                 };
-                value.set(ctx, a.borrow().get() + 5);
+                value.set(pc, a.borrow().get() + 5);
             }
 
             fn inputs(&self) -> std::vec::Vec<Value> {
@@ -152,8 +157,8 @@ fn basic0() {
             }
         }
 
-        let _link = new_link(ctx, b.clone(), LinkAB { a: a.weak() });
-        a.set(ctx, 46);
+        let _link = new_link(pc, b.clone(), LinkAB { a: a.weak() });
+        a.set(pc, 46);
         return (a, b, _link);
     });
     assert_eq!(*b.borrow().get(), 51);

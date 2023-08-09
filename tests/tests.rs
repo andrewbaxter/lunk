@@ -1,10 +1,10 @@
 use lunk::{
-    EventContext,
+    EventGraph,
 };
 
 #[test]
 fn basic_primitive() {
-    let ec = EventContext::new();
+    let ec = EventGraph::new();
     let (_a, b, _link) = ec.event(|ctx| {
         let a = lunk::new_prim(ctx, 0i32);
         let b = lunk::new_prim(ctx, 0i32);
@@ -24,7 +24,7 @@ fn basic_primitive() {
 
 #[test]
 fn basic_vec() {
-    let ec = EventContext::new();
+    let ec = EventGraph::new();
     let (_a, b, _link) = ec.event(|ctx| {
         let a = lunk::new_vec(ctx, vec![]);
         let b = lunk::new_vec(ctx, vec![]);
