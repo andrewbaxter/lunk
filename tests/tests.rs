@@ -6,8 +6,8 @@ use lunk::{
 fn basic_primitive() {
     let ec = EventGraph::new();
     let (_a, b, _link) = ec.event(|ctx| {
-        let a = lunk::new_prim(ctx, 0i32);
-        let b = lunk::new_prim(ctx, 0i32);
+        let a = lunk::Prim::new(ctx, 0i32);
+        let b = lunk::Prim::new(ctx, 0i32);
         let _link = lunk::link!((
             ctx = ctx,
             output: lunk::Prim<i32> = b;
@@ -26,8 +26,8 @@ fn basic_primitive() {
 fn basic_primitive2x() {
     let ec = EventGraph::new();
     let (a, b, _link) = ec.event(|ctx| {
-        let a = lunk::new_prim(ctx, 0i32);
-        let b = lunk::new_prim(ctx, 0i32);
+        let a = lunk::Prim::new(ctx, 0i32);
+        let b = lunk::Prim::new(ctx, 0i32);
         let _link = lunk::link!((
             ctx = ctx,
             output: lunk::Prim<i32> = b;
@@ -50,8 +50,8 @@ fn basic_primitive2x() {
 fn basic_vec() {
     let ec = EventGraph::new();
     let (_a, b, _link) = ec.event(|ctx| {
-        let a = lunk::new_vec(ctx, vec![]);
-        let b = lunk::new_vec(ctx, vec![]);
+        let a = lunk::Vec::new(ctx, vec![]);
+        let b = lunk::Vec::new(ctx, vec![]);
         let _link = lunk::link!((
             ctx = ctx,
             output: lunk::Vec<i32> = b;
@@ -72,8 +72,8 @@ fn basic_vec() {
 fn basic_vec2x() {
     let ec = EventGraph::new();
     let (a, b, _link) = ec.event(|ctx| {
-        let a = lunk::new_vec(ctx, vec![]);
-        let b = lunk::new_vec(ctx, vec![]);
+        let a = lunk::Vec::new(ctx, vec![]);
+        let b = lunk::Vec::new(ctx, vec![]);
         let _link = lunk::link!((
             ctx = ctx,
             output: lunk::Vec<i32> = b;

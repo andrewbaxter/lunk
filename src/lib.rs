@@ -135,8 +135,8 @@ fn basic0() {
 
     let eg = EventGraph::new();
     let (_a, b, _link) = eg.event(|pc| {
-        let a = new_prim(pc, 0);
-        let b = new_prim(pc, 0);
+        let a = Prim::new(pc, 0);
+        let b = Prim::new(pc, 0);
 
         struct LinkAB {
             a: WeakPrim<i32>,
