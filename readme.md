@@ -22,7 +22,7 @@ Status: MVP
 
 1. Create an `EventGraph` `eg`
 2. Call `eg.event(|pc| { })`. All events and program initialization should be done within `eg.event`. `eg.event` waits until the callback ends and then processes the dirty graph. Creating new links triggers event processing, which is why even initialization should be done in this context.
-3. Within the event context, create values with `lunk::new_prim()` and `lunk::new_vec()`. Create links with `lunk::link!()`.
+3. Within the event context, create values with `lunk::Prim::new()` and `lunk::Vec::new()`. Create links with `lunk::link!()`.
 4. Modify data values using the associated methods to trigger cascading updates. Note that any newly created links will also always be run during the event processing in the event they were created.
 
 An example helps:
@@ -31,8 +31,8 @@ An example helps:
 fn graph_stuff() {
     let ec = EventGraph::new();
     let (_a, b, _link) = ec.event(|ctx| {
-        let a = lunk::new_prim(ctx, 0i32);
-        let b = lunk::new_prim(ctx, 0i32);
+        let a = lunk::Prim::new(ctx, 0i32);
+        let b = lunk::Vec::new(ctx, 0i32);
         let _link = lunk::link!((
             ctx = ctx,
             output: lunk::Prim<i32> = b;
@@ -116,6 +116,20 @@ to step the animation (`delta_s` is seconds since the last update).
 Any value that implements `Mult` `Add` and `Sub` can be eased like this.
 
 You can create your own custom animations by implementing `PrimAnimation` and calling `animator.start(MyPrimAnimation{...})`.
+
+## Troubleshooting
+
+### My callback isn't firing
+
+Possible causes
+
+- The callback link was dropped, or an intermediate link on the way to the final link was dropped.
+
+  Forward references are weak, so each dependent link object needs to be kept around as long as the callback is relevant.
+
+- You set the value but `PartialEq` determined it was equal to the current value
+
+  If the value is the same, no updates will occur. This is to prevent unnecessary work when lots of changes are triggered by eliminating unmodified paths, but if you implemented `PartialEq` imprecisely it can prevent legitimate events from being handled.
 
 # Why flexibility over performance
 

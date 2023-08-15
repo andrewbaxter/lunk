@@ -11,11 +11,9 @@ pub use crate::core::{
 };
 pub use prim::{
     Prim,
-    new_prim,
 };
 pub use vec::{
     Vec,
-    new_vec,
 };
 pub use animate::{
     Animator,
@@ -113,7 +111,7 @@ macro_rules! link{
     ) => {
         {
             let pc =& mut * $pcval;
-            let _out = $crate:: prim:: new_prim(pc, ());
+            let _out = $crate:: prim:: Prim:: new(pc, ());
             $crate:: link !(
                 ($pcname = pc, _out: $crate:: prim:: Prim <() >= _out; $($vname = $vval), *; $($name = $val), *) {
                     $body

@@ -48,22 +48,22 @@ pub struct Prim<T: PartialEq + Clone>(pub(crate) Rc<RefCell<_Prim<T>>>);
 #[derive(Clone)]
 pub struct WeakPrim<T: PartialEq + Clone>(Weak<RefCell<_Prim<T>>>);
 
-pub fn new_prim<T: PartialEq + Clone>(ctx: &mut ProcessingContext, initial: T) -> Prim<T> {
-    return Prim(Rc::new(RefCell::new(_Prim {
-        id: ctx.1.take_id(),
-        value: initial,
-        previous_value: None,
-        next: vec![],
-    })));
-}
-
 impl<T: PartialEq + Clone + 'static> Prim<T> {
+    pub fn new(pc: &mut ProcessingContext, initial: T) -> Self {
+        return Prim(Rc::new(RefCell::new(_Prim {
+            id: pc.1.take_id(),
+            value: initial,
+            previous_value: None,
+            next: vec![],
+        })));
+    }
+
     pub fn weak(&self) -> WeakPrim<T> {
         return WeakPrim(Rc::downgrade(&self.0));
     }
 
     /// Modify the value and mark downstream links as needing to be rerun.
-    pub fn set(&self, ctx: &mut ProcessingContext, mut value: T) {
+    pub fn set(&self, pc: &mut ProcessingContext, mut value: T) {
         let mut self2 = self.0.as_ref().borrow_mut();
         if self2.value == value {
             return;
@@ -72,7 +72,7 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
         let first_change = self2.previous_value.is_none();
         self2.previous_value = Some(value);
         if first_change {
-            ctx.1.processed.insert(self2.id, Box::new({
+            pc.1.processed.insert(self2.id, Box::new({
                 let s = self.clone();
                 move || s.clean()
             }));
@@ -81,12 +81,12 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
                     return false;
                 };
                 let id = d.borrow().id();
-                if ctx.1.processed.contains_key(&id) {
+                if pc.1.processed.contains_key(&id) {
                     return true;
                 }
                 let mut d_mut = d.as_ref().borrow_mut();
                 if d_mut.dec_prev_pending() <= 0 {
-                    ctx.1.queue.push(Rc::downgrade(&d));
+                    pc.1.queue.push(Rc::downgrade(&d));
                 }
                 return true;
             });

@@ -46,7 +46,7 @@ impl<T: Clone + 'static> _Vec<T> {
     fn splice(
         &mut self,
         self2: &Vec<T>,
-        ctx: &mut ProcessingContext,
+        pc: &mut ProcessingContext,
         offset: usize,
         remove: usize,
         add: std::vec::Vec<T>,
@@ -59,7 +59,7 @@ impl<T: Clone + 'static> _Vec<T> {
             add: add,
         });
         if first_change {
-            ctx.1.processed.insert(self.id, Box::new({
+            pc.1.processed.insert(self.id, Box::new({
                 let s = self2.clone();
                 move || s.clean()
             }));
@@ -68,12 +68,12 @@ impl<T: Clone + 'static> _Vec<T> {
                     return false;
                 };
                 let id = d.as_ref().borrow().id();
-                if ctx.1.processed.contains_key(&id) {
+                if pc.1.processed.contains_key(&id) {
                     return true;
                 }
                 let mut d_mut = d.as_ref().borrow_mut();
                 if d_mut.dec_prev_pending() <= 0 {
-                    ctx.1.queue.push(Rc::downgrade(&d));
+                    pc.1.queue.push(Rc::downgrade(&d));
                 }
                 return true;
             });
@@ -98,16 +98,16 @@ pub struct Vec<T: Clone>(Rc<RefCell<_Vec<T>>>);
 #[derive(Clone)]
 pub struct WeakVec<T: Clone>(Weak<RefCell<_Vec<T>>>);
 
-pub fn new_vec<T: Clone + 'static>(ctx: &mut ProcessingContext, initial: std::vec::Vec<T>) -> Vec<T> {
-    return Vec(Rc::new(RefCell::new(_Vec {
-        id: ctx.1.take_id(),
-        value: initial,
-        changes: vec![],
-        next: vec![],
-    })));
-}
-
 impl<T: Clone + 'static> Vec<T> {
+    pub fn new(pc: &mut ProcessingContext, initial: std::vec::Vec<T>) -> Self {
+        return Vec(Rc::new(RefCell::new(_Vec {
+            id: pc.1.take_id(),
+            value: initial,
+            changes: vec![],
+            next: vec![],
+        })));
+    }
+
     pub fn weak(&self) -> WeakVec<T> {
         return WeakVec(Rc::downgrade(&self.0));
     }
@@ -115,19 +115,31 @@ impl<T: Clone + 'static> Vec<T> {
     /// Modify the value and mark downstream links as needing to be rerun.
     pub fn splice(
         &self,
-        ctx: &mut ProcessingContext,
+        pc: &mut ProcessingContext,
         offset: usize,
         remove: usize,
         add: std::vec::Vec<T>,
     ) -> std::vec::Vec<T> {
-        return self.0.as_ref().borrow_mut().splice(&self, ctx, offset, remove, add);
+        return self.0.as_ref().borrow_mut().splice(&self, pc, offset, remove, add);
+    }
+
+    pub fn push(&self, pc: &mut ProcessingContext, value: T) {
+        let mut self2 = self.0.as_ref().borrow_mut();
+        let len = self2.value.len();
+        self2.splice(&self, pc, len, 0, vec![value]);
+    }
+
+    pub fn extend(&self, pc: &mut ProcessingContext, values: std::vec::Vec<T>) {
+        let mut self2 = self.0.as_ref().borrow_mut();
+        let len = self2.value.len();
+        self2.splice(&self, pc, len, 0, values);
     }
 
     /// Clears the collection, triggering updates.
-    pub fn clear(&self, ctx: &mut ProcessingContext) {
+    pub fn clear(&self, pc: &mut ProcessingContext) {
         let mut self2 = self.0.as_ref().borrow_mut();
         let len = self2.value.len();
-        self2.splice(&self, ctx, 0, len, vec![]);
+        self2.splice(&self, pc, 0, len, vec![]);
     }
 
     /// Immutable access to the collection.
