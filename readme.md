@@ -89,13 +89,7 @@ The body is a function implementation. It returns an `Option<()>` if you want to
 
 ## Ownership
 
-The graph is heterogenous, with data referring to dependent links, and links referring to both input and output data.
-
-Links store a strong reference to their output data. Depending on how you invoke the `link!` macro, link inputs can be kept with either strong or weak references. Data keeps weak references to dependent links.
-
-This means that in general cycles won't lead to memory leaks, but if a link gets dropped accidentally may unexpectedly stop.
-
-I recommend storing links and data scoped to their associated view components, so that when those components are removed the corresponding links and data values also get dropped.
+Links and data have bidirectional references but these are weak. If a link is dropped it will stop being updated during events.
 
 ## Animation
 

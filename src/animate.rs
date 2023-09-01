@@ -10,7 +10,6 @@ use crate::{
     EventGraph,
     core::{
         Id,
-        _ExtValueTrait,
         NULL_ID,
     },
     prim::WeakPrim,
@@ -79,7 +78,7 @@ impl<
     }
 
     fn id(&self) -> Id {
-        return self.value.upgrade().map(|v| v.id()).unwrap_or(NULL_ID);
+        return self.value.upgrade().map(|v| v.0.id).unwrap_or(NULL_ID);
     }
 }
 
@@ -114,7 +113,7 @@ impl Animator {
     /// Stop smooth a primitive. If the primitive isn't being smoothed this does
     /// nothing. The primitive will retain the current value.
     pub fn cancel<T: PartialEq + Clone + 'static>(&mut self, prim: &Prim<T>) {
-        self.interp.remove(&prim.id());
+        self.interp.remove(&prim.0.id);
     }
 
     /// Stop all current easings.

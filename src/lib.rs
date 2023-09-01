@@ -1,32 +1,33 @@
 pub mod core;
 pub mod prim;
-pub mod vec;
+pub mod list;
 pub mod animate;
 
 pub use crate::core::{
-    new_link,
-    LinkCb,
+    Link,
+    LinkTrait,
     EventGraph,
     ProcessingContext,
 };
-pub use prim::{
+pub use crate::prim::{
     Prim,
 };
-pub use vec::{
-    Vec,
+pub use crate::list::{
+    List,
 };
-pub use animate::{
+pub use crate::animate::{
     Animator,
     PrimEaseExt,
 };
 pub use paste;
 
+/// Create a link, or mapping function, between a number of input data and a single
+/// output.
 #[macro_export]
 macro_rules! link{
     (
         (
-            $pcname: ident = $pcval: expr,
-            $outputname: ident: $outputtype: ty = $outputval: expr;
+            $pcname: ident = $pcval: expr;
             $($vname: ident = $vval: expr),
             * $(,) ?;
             $($name: ident = $val: expr),
@@ -52,7 +53,6 @@ macro_rules! link{
                     //. x
                     f: fn(
                         & mut $crate:: core:: ProcessingContext,
-                        & $outputtype,
                         $(&[< _ $vname: upper >],) * $(&[< _ $name: upper >],) *
                     ) -> Option <() >,
                 }
@@ -65,33 +65,32 @@ macro_rules! link{
                 //. x
                 $([< _ $name: upper >],) *
                 //. _
-                > $crate:: core:: LinkCb < $outputtype > for _Link < 
+                > $crate:: core:: LinkTrait for _Link < 
                 //. x
                 $([< _ $vname: upper >],) * 
                 //. x
                 $([< _ $name: upper >],) *
                 //. _
                 > {
-                    fn call(&self, pc:& mut $crate:: core:: ProcessingContext, output:& $outputtype) {
-                        (self.f)(pc, output, $(& self.[< _ $vname >],) * $(& self.[< _ $name >],) *);
+                    fn call(&self, pc:& mut $crate:: core:: ProcessingContext) {
+                        (self.f)(pc, $(& self.[< _ $vname >],) * $(& self.[< _ $name >],) *);
                     }
                     fn inputs(&self) -> std:: vec:: Vec < $crate:: core:: Value > {
                         return[
-                            $(self.[< _ $vname >].clone(),) *
-                        ].into_iter().filter_map(|x| x.upgrade_as_value()).collect();
+                            $(self.[< _ $vname >].clone().upgrade_as_value(),) *
+                        ].into_iter().filter_map(|x| x).collect();
                     }
                 }
                 // #
                 //
                 // INST
-                $crate:: core:: new_link($pcval, $outputval.clone(), _Link {
+                $crate:: Link:: new($pcval, _Link {
                     //. x
                     $([< _ $vname >]: $vval,) * 
                     //. x
                     $([< _ $name >]: $val,) * 
                     //. x
                     f:| $pcname,
-                    $outputname,
                     $($vname,) * $($name,) *|-> Option <() > {
                         $body;
                         return None;
@@ -100,25 +99,6 @@ macro_rules! link{
             }
         }
     };
-    (
-        (
-            $pcname: ident = $pcval: expr;
-            $($vname: ident = $vval: expr),
-            * $(,) ?;
-            $($name: ident = $val: expr),
-            * $(,) ? $(;) ?
-        ) $body: block
-    ) => {
-        {
-            let pc =& mut * $pcval;
-            let _out = $crate:: prim:: Prim:: new(pc, ());
-            $crate:: link !(
-                ($pcname = pc, _out: $crate:: prim:: Prim <() >= _out; $($vname = $vval), *; $($name = $val), *) {
-                    $body
-                }
-            )
-        }
-    }
 }
 
 #[test]
@@ -140,14 +120,15 @@ fn basic0() {
 
         struct LinkAB {
             a: WeakPrim<i32>,
+            value: Prim<i32>,
         }
 
-        impl LinkCb<Prim<i32>> for LinkAB {
-            fn call(&self, pc: &mut ProcessingContext, value: &Prim<i32>) {
+        impl LinkTrait for LinkAB {
+            fn call(&self, pc: &mut ProcessingContext) {
                 let Some(a) = self.a.upgrade() else {
                     return;
                 };
-                value.set(pc, a.borrow().get() + 5);
+                self.value.set(pc, a.borrow().get() + 5);
             }
 
             fn inputs(&self) -> std::vec::Vec<Value> {
@@ -155,7 +136,10 @@ fn basic0() {
             }
         }
 
-        let _link = new_link(pc, b.clone(), LinkAB { a: a.weak() });
+        let _link = Link::new(pc, LinkAB {
+            a: a.weak(),
+            value: b.clone(),
+        });
         a.set(pc, 46);
         return (a, b, _link);
     });
