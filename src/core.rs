@@ -13,26 +13,29 @@ use std::{
     },
 };
 
+/// A unique id for all items in the graph (links and values). Starts from 1, 0 is
+/// invalid.
 pub type Id = usize;
 pub const NULL_ID: Id = 0;
 type PendingCount = i32;
 
-pub(crate) trait _IntValueTrait {
+pub(crate) trait ValueTrait {
     fn id(&self) -> Id;
     fn add_next(&self, link: Weak<Link_>);
 }
 
-pub struct Value(pub(crate) Rc<dyn _IntValueTrait>);
+pub struct Value(pub(crate) Rc<dyn ValueTrait>);
 
 pub(crate) trait Cleanup {
     fn clean(&self);
 }
 
-/// Helper method for implementing `inputs` in `LinkCb`.
+/// Helper method for implementing `inputs` in `LinkTrait`.
 pub trait UpgradeValue {
     fn upgrade_as_value(&self) -> Option<Value>;
 }
 
+/// Behavior required for manually defining links.
 pub trait LinkTrait {
     /// Called when all dirty inputs (dependencies, per `inputs`) have been processed,
     /// if there's at least one dirty input.
@@ -75,16 +78,24 @@ impl Cleanup for Link_ {
     }
 }
 
+/// A link, representing processing taking some inputs and modifying outputs.  This
+/// object is just an ownership root, it's not particularly interactive.
 #[derive(Clone)]
 pub struct Link(pub(crate) Rc<Link_>);
 
 impl Link {
-    /// Create a link with the given `LinkCb`.  The link will immediately be scheduled
-    /// to be updated once the current `EventContext` event function invocation ends.
+    /// Create a link with the given `LinkCb`.  The new link will immediately be
+    /// scheduled to be run once, when the current `EventContext` event function
+    /// invocation ends.  To ensure that this is ordered properly during the initial
+    /// run, for each output value you should call
+    /// `pc.mark_new_output_value(output.id())`.
+    ///
+    /// The link will only continue to be triggered as long as the `Link` object
+    /// exists, dropping it will deactivate that graph path.
     #[must_use]
     pub fn new(pc: &mut ProcessingContext, inner: impl LinkTrait + 'static) -> Self {
         let pending = inner.inputs().len() as PendingCount;
-        let id = pc.0.0.borrow_mut().take_id();
+        let id = pc.1.take_id();
         let out = Link(Rc::new(Link_ {
             id: id,
             inner: Box::new(inner),
@@ -99,7 +110,7 @@ pub struct _Context {
     pub(crate) new_links: HashMap<Id, Weak<Link_>>,
     pub(crate) queued_links: Vec<Weak<Link_>>,
     pub(crate) processed_links: HashSet<Id>,
-    pub(crate) new_values: HashSet<Id>,
+    pub(crate) new_output_values: HashSet<Id>,
     pub(crate) cleanup: Vec<Rc<dyn Cleanup>>,
     ids: usize,
 }
@@ -117,7 +128,8 @@ impl _Context {
 #[derive(Clone)]
 pub struct EventGraph(Rc<RefCell<_Context>>);
 
-/// Context used during event processing.
+/// Context used during the processing of a single event.  You should pass this
+/// around as a `&mut` and probably not store it persistently.
 pub struct ProcessingContext<'a>(pub(crate) &'a EventGraph, pub(crate) &'a mut _Context);
 
 impl EventGraph {
@@ -126,7 +138,7 @@ impl EventGraph {
             new_links: Default::default(),
             queued_links: Default::default(),
             processed_links: Default::default(),
-            new_values: Default::default(),
+            new_output_values: Default::default(),
             cleanup: vec![],
             ids: 1,
         })));
@@ -134,7 +146,8 @@ impl EventGraph {
 
     /// This is a wrapper that runs the event graph after the callback finishes. You
     /// should call this whenever an event happens (user input, remote notification,
-    /// etc) as well as during initial setup.
+    /// etc) as well as during initial setup, and do all graph manipulation from within
+    /// the callback.
     pub fn event<Z>(&self, f: impl FnOnce(&mut ProcessingContext) -> Z) -> Z {
         let mut s = self.0.borrow_mut();
 
@@ -160,9 +173,10 @@ impl EventGraph {
                 // Attach to graph
                 prev.0.add_next(Rc::downgrade(&l));
 
-                // Assume all non-new inputs are dirty (and processed) - we only want to order
-                // after not-yet processed new tree deps.
-                if s.new_values.contains(&prev.0.id()) {
+                // For new links, assume all inputs that are already in the graph have changed, as
+                // well as root input values for new links.  That means only values that are
+                // outputs of new links should be considered pending and therefore ordered after.
+                if s.new_output_values.contains(&prev.0.id()) {
                     new_count += 1;
                 }
             }
@@ -180,7 +194,7 @@ impl EventGraph {
         }
 
         // Cleanup
-        s.new_values.clear();
+        s.new_output_values.clear();
         s.processed_links.clear();
         for p in s.cleanup.drain(0..) {
             p.clean();
@@ -190,7 +204,14 @@ impl EventGraph {
 }
 
 impl<'a> ProcessingContext<'a> {
+    /// Get the event graph that created this processing context (so you don't need to
+    /// pass it around along with the processing context).
     pub fn eg(&self) -> EventGraph {
         return self.0.clone();
+    }
+
+    /// Used for manual link implementation.  See `Link::new` for details.
+    pub fn mark_new_output_value(&mut self, id: Id) {
+        self.1.new_output_values.insert(id);
     }
 }

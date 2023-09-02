@@ -4,13 +4,13 @@ The expected use case is user interfaces, where user events (clicks, typing) can
 
 Most web UI frameworks include their own event graph processing tools: Sycamore has signals, Dioxus and others have similar. This is a standalone tool, for use without a framework (i.e. with Gloo and other a la carte tools).
 
-Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance.
+Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance (although it appears to be pretty fast anyway).
 
 - You can represent a full graph, including cycles
-- Data has simple, lifetime-less types (`Prim<i32>`, `vec::Vec<i32>`, etc) which makes it simple to pass around and store in structures
+- Data has simple, lifetime-less types (`Prim<i32>`, `List<i32>`, etc) which makes it simple to pass around and store in structures
 - Handles graph modifications during graph processing - new nodes will be processed after their dependencies
 - A macro for generating links, but implementing it by hand requires minimal boilerplate
-- Animation
+- Animation/easing property changes
 
 This only handles synchronous graph processing at the moment. Asynchronous events are not handled.
 
@@ -21,109 +21,146 @@ Status: MVP
 ## Basic usage
 
 1. Create an `EventGraph` `eg`
-2. Call `eg.event(|pc| { })`. All events and program initialization should be done within `eg.event`. `eg.event` waits until the callback ends and then processes the dirty graph. Creating new links triggers event processing, which is why even initialization should be done in this context.
-3. Within the event context, create values with `lunk::Prim::new()` and `lunk::Vec::new()`. Create links with `lunk::link!()`.
-4. Modify data values using the associated methods to trigger cascading updates. Note that any newly created links will also always be run during the event processing in the event they were created.
+2. Call `eg.event(|pc| { })` to do setup.
+3. Within the event context, create values with `lunk::Prim::new()` and `lunk::List::new()`. Create links to process input changes with `lunk::link!()`.
+4. When user input happens, call `eg.event` and modify data values using the associated methods.
 
-An example helps:
+An example:
 
 ```rust
-fn graph_stuff() {
-    let ec = EventGraph::new();
-    let (_a, b, _link) = ec.event(|ctx| {
-        let a = lunk::Prim::new(ctx, 0i32);
-        let b = lunk::Vec::new(ctx, 0i32);
-        let _link = lunk::link!((
-            ctx = ctx,
-            output: lunk::Prim<i32> = b;
-            a = a.weak();
-        ) {
-            let a = a.upgrade()?;
-            output.set(ctx, a.borrow().get() + 5);
-        });
-        a.set(ctx, 46);
-        return (a, b, _link);
+fn main() {
+    let eg = lunk::EventGraph::new();
+    let (_input_a, _input_b, output, _link) = eg.event(|pc| {
+        let input_a = lunk::Prim::new(pc, 0i32);
+        let input_b = lunk::Prim::new(pc, 1f32);
+        let output = lunk::Prim::new(pc, 0f32);
+        let _link =
+            lunk::link!(
+                (ctx = pc),
+                (input_a = input_a.weak(), input_b = input_b.weak()),
+                (output = output.weak()),
+                () {
+                    output.upgrade()?.set(ctx, input_a.upgrade()?.get() as f32 * input_b.upgrade()?.get() + 5.);
+                }
+            );
+        input_a.set(pc, 46);
+        return (input_a, input_b, output, _link);
     });
-    assert_eq!(*b.borrow().get(), 51);
+    assert_eq!(output.get(), 51.);
 }
 ```
 
-## Linking things
+When `a` is modified, `b` will be updated to have the a's value plus 5.
 
-The basic way to link things is to implement `LinkCb` on a struct and then instantiate the link with `new_link`.
-
-There's a macro to automate this: `link!`, which I'd recommend. I'm not a fan of macros, but I think this macro is fairly un-surprising and saves a bit of boilerplate.
-
-The `link!` macro looks kind of like a function signature, but where the arguments are separated into three segments with `;`.
-
-```rust
-let _link = link!((ctx1 = ctx2, output: DTYPE = output1; a=a1, ...; b=b1, ...) {
-    let a = a.upgrade()?;
-    let b = b.upgrade()?;
-    output.set(a.get() + b.get());
-})
-```
-
-The first argument segment has fixed elements:
-
-- `ctx1` is the name of the context binding in the context of the link callback,
-  and `ctx2` is the `ProcessingContext` in the current scope used for setting
-  up the link. This is provided within an invocation of `EventGraph`'s `event()`.
-  The `=` here is inappropriate, `ctx1` and `ctx2` are separate values, I just used
-  it to be consistent with the rest of the macro.
-- Capture `output1` from the current scope and use it as the output of the link activation function. It will be available with the name `output` in the link callback, where the code can modify it. It must have a type of `DTYPE` -- the macro can't infer this so you need to specify it manually.
-
-  Example: `output: Prim<i32> = counter`.
-
-  You can omit `output: ...` if you don't need a listenable output from the computation. The link will be invoked as usual when its inputs change, but no further graph calculations will happen after this node.
-
-The second segment takes any number of values:
-
-- Capture a graph data value `a1` in the current value and use it as an input to the link callback, available with the name `a`. The callback will be called whenever any of the inputs change.
-
-The third section again takes any number of values:
-
-- Capture any non-input values `b1` which will also be available in the link callback with the name `b`.
-
-The body is a function implementation. It returns an `Option<()>` if you want to abort processing here, for example if a weak reference to an input is invalid. The macro adds `return None` to the end.
+See `link!` documentation for a detailed explanation. Links can be manually (without macros) defined but there's some boilerplate.
 
 ## Ownership
 
-Links and data have bidirectional references but these are weak. If a link is dropped it will stop being updated during events.
+Values have no references to other values or links.
+
+Links have strong/weak references to values depending on how you captured them.
+
+Generally, to avoid reference cycles, capturing only weak links and making the creator responsible for ownership of everything (values, links) is probably the simplest way to manage ownership. In some circumstances, e.g. for intermediate values for chains of transformation, it might make sense to capture those inputs as strong references so you only need to keep ownership of the consuming links.
 
 ## Animation
 
-To animate primitive values just create an `Animator` and call `set_ease` on the primitive instead of `set`. `set_ease` requires an easing function - the crate `ezing` looks complete and should be easy to use I think.
+To animate primitive values
 
+1. Create an `Animator`
+
+   Since you'll probably want to pass it around, making it a `Rc<RefCell<Animator>>` is a good solution.
+
+2. Call `set_ease` on a primitive instead of `set`.
+
+   `set_ease` requires an easing function - [ezing](https://github.com/michaelfairley/ezing) comes with a fairly complete set of easing functions:
+
+   ```
+   my_prim.set_ease(&mut animator, 44.3, 0.3, ezing::linear_inout);
+   ```
+
+   `set_ease` should be automatically implemented for any `Prim` where the value implements `Mult<f32>` and `Add` and `Sub` for its own type.
+
+3. Call `update()` on the `Animator` regularly (at least until all animations finish).
+
+   ```
+   animator.update(&eg, delta_s);
+   ```
+
+   This step the animation (`delta_s` is seconds since the last update) and returns true if there are still in-progress animations.
+
+Aside from `set_ease`, you can create your own custom animations by implementing `PrimAnimation` and calling `animator.start(MyPrimAnimation{...})`.
+
+### Idiomatic usage on the web
+
+This was a bit tricky to work out, but I think the idiomatic way to use this in WASM currently with `request_animation_frame` (via Gloo):
+
+```rust
+let eg = lunk::EventGraph::new();
+let anim = Rc::new(RefCell::new(Animator::new()));
+anim.as_ref().borrow_mut().set_start_cb({
+    let anim = anim.clone();
+    let eg = eg.clone();
+    let running = Rc::new(RefCell::new(None));
+
+    fn one_more_frame(
+        running: Rc<RefCell<Option<AnimationFrame>>>,
+        eg: EventGraph,
+        anim: Rc<RefCell<Animator>>,
+    ) {
+        *running.borrow_mut() = Some(request_animation_frame({
+            let running = running.clone();
+            move |delta| {
+                if anim.as_ref().borrow_mut().update(&eg, delta) {
+                    one_more_frame(running, eg, anim);
+                } else {
+                    *running.borrow_mut() = None;
+                }
+            }
+        }));
+    }
+
+    move || {
+        if running.borrow().is_some() {
+            return;
+        }
+        one_more_frame(running.clone(), eg.clone(), anim.clone());
+    }
+});
 ```
-my_prim.set_ease(animator.borrow_mut(), 44.3, 0.3, ezing::linear_inout);
-```
 
-Then regularly call
+Basically `request_animation_frame` needs to be called recursively to start the next frame, but the return value of each one needs to be stored until it's actually called.
 
-```
-animator.borrow_mut().update(eg, delta_s);
-```
-
-to step the animation (`delta_s` is seconds since the last update).
-
-Any value that implements `Mult` `Add` and `Sub` can be eased like this.
-
-You can create your own custom animations by implementing `PrimAnimation` and calling `animator.start(MyPrimAnimation{...})`.
+To do this I made a shared `Option` for holding the return, which is kept alive inside the callback which is owned by `anim`.
 
 ## Troubleshooting
+
+### Mismatched types; expected fn pointer
+
+If you read down, it should say something like "closures can only be coerced to `fn` types if they do not capture any variables". This isn't about wrong types, it's about implicit captures.
+
+All captures in links created with `link!` need to be in one of the `()` at the start.
+
+In VS Code I need to click the button to see the full error before it shows which value is implicitly captured.
+
+### Unreachable statement
+
+This occurs when you have an unconditional `return` in your callback. To support short ciruiting `Option` returns via `?`, `link!` adds a `return None` to the end of your function body. If you also return, this `return None` becomes unreachable, hence the alerts.
 
 ### My callback isn't firing
 
 Possible causes
 
-- The callback link was dropped, or an intermediate link on the way to the final link was dropped.
+- The callback link was dropped or an input/output value captured by weak reference was dropped, or something earlier in the path to this node in the graph was dropped.
 
   Forward references are weak, so each dependent link object needs to be kept around as long as the callback is relevant.
 
 - You set the value but `PartialEq` determined it was equal to the current value
 
   If the value is the same, no updates will occur. This is to prevent unnecessary work when lots of changes are triggered by eliminating unmodified paths, but if you implemented `PartialEq` imprecisely it can prevent legitimate events from being handled.
+
+- You have your capture groups mixed up, and inputs are interpreted as something else (outputs, other captures).
+
+  If you have the inputs in the wrong macro KV group they won't be acknowledged as a graph connection, so changes to dependencies won't trigger the callback.
 
 # Why flexibility over performance
 

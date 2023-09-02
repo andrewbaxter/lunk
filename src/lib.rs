@@ -21,19 +21,61 @@ pub use crate::animate::{
 };
 pub use paste;
 
-/// Create a link, or mapping function, between a number of input data and a single
-/// output.
+/// Define a link, a callback that triggers during event graph processing if any of
+/// the inputs change. A link will also be triggered during the event the link was
+/// created in, whether inputs changed or not.
+///
+/// Link specification is like defining a closure, however all captures must be
+/// explicitly defined up front. The macro takes the form of a function definition
+/// with multiple parentheses for different capture groups.
+///
+/// ```rust
+/// let _link = link!(
+///   (CONTEXT KVS),
+///   (INPUT KVS),
+///   (OUTPUT KVS),
+///   (OTHER CAPTURE KVS) {
+///   BODY
+/// });
+/// ```
+///
+/// * Each `KVS` group takes values in the form of `x1 = x2` where `x2` is an
+///   expression for a value that will be used inside the link callback, and `x1` is
+///   the name it's assigned within the callback.
+///
+/// * `CONTEXT KVS` looks like `pc = pc`, it takes the `ProcessingContext` from the
+///   current event.
+///
+/// * `INPUT KVS` is a list of input values which will trigger this callback to run.
+///   This needs at least one item.
+///
+/// * `OUTPUT KVS` is a list of values that may be modified by this callback.  This can
+///   be empty if the callback doesn't cause any downstream processing - for example,
+///   in a UI a callback that updates view state.
+///
+/// * `OTHER CAPTURE KVS` is a list of other values to capture not related to graph
+///   processing.  This can be empty.
+///
+/// * `BODY` is the code of the callback. It should read from the inputs and modify the
+///   outputs. It implicitly (no explicit return needed) returns an `Option<()>` to
+///   help with short circuiting, for example if you use a weak reference to an input
+///   and upgrading that input results in None.
+///
+/// The link returns a link object. The link callback will only trigger as long as
+/// that object exists, so you need to own it as long as it's relevant.
 #[macro_export]
 macro_rules! link{
     (
-        (
-            $pcname: ident = $pcval: expr;
-            $($vname: ident = $vval: expr),
-            * $(,) ?;
-            $($name: ident = $val: expr),
-            * $(,) ? $(;) ?
-        ) $body: block
-    ) => {
+        //. .
+        ($pcname: ident = $pcval: expr), 
+        //. .
+        ($($input_name: ident = $input_val: expr), * $(,) ?), 
+        //. .
+        ($($output_name: ident = $output_val: expr), * $(,) ?), 
+        //. .
+        ($($name: ident = $val: expr), * $(,) ?) $(,) ? 
+        //. .
+        $body: block) => {
         $crate:: paste:: paste ! {
             {
                 // #
@@ -41,57 +83,85 @@ macro_rules! link{
                 // DEF
                 struct _Link < 
                 //. x
-                $([< _ $vname: upper >],) * 
+                $([< _ $input_name: upper >],) * 
+                //. x
+                $([< _ $output_name: upper >],) * 
                 //. x
                 $([< _ $name: upper >],) *
                 //. _
                 > {
                     //. x
-                    $([< _ $vname >]:[< _ $vname: upper >],) * 
+                    $([< _ $input_name >]:[< _ $input_name: upper >],) * 
+                    //. x
+                    $([< _ $output_name >]:[< _ $output_name: upper >],) * 
                     //. x
                     $([< _ $name >]:[< _ $name: upper >],) * 
                     //. x
-                    f: fn(
-                        & mut $crate:: core:: ProcessingContext,
-                        $(&[< _ $vname: upper >],) * $(&[< _ $name: upper >],) *
-                    ) -> Option <() >,
+                    f: fn(& mut $crate:: core:: ProcessingContext, 
+                        //. .
+                        $(&[< _ $input_name: upper >],) * 
+                        //. .
+                        $(&[< _ $output_name: upper >],) * 
+                        //. .
+                        $(&[< _ $name: upper >],) *) -> Option <() >,
                 }
                 // #
                 //
                 // IMPL
                 impl < 
                 //. x
-                $([< _ $vname: upper >]: Clone + $crate:: core:: UpgradeValue,) * 
+                $([< _ $input_name: upper >]: Clone + $crate:: core:: UpgradeValue,) * 
+                //. x
+                $([< _ $output_name: upper >],) * 
                 //. x
                 $([< _ $name: upper >],) *
                 //. _
                 > $crate:: core:: LinkTrait for _Link < 
                 //. x
-                $([< _ $vname: upper >],) * 
+                $([< _ $input_name: upper >],) * 
+                //. x
+                $([< _ $output_name: upper >],) * 
                 //. x
                 $([< _ $name: upper >],) *
                 //. _
                 > {
                     fn call(&self, pc:& mut $crate:: core:: ProcessingContext) {
-                        (self.f)(pc, $(& self.[< _ $vname >],) * $(& self.[< _ $name >],) *);
+                        (self.f)(pc, 
+                            //. .
+                            $(& self.[< _ $input_name >],) * 
+                            //. .
+                            $(& self.[< _ $output_name >],) * 
+                            //. .
+                            $(& self.[< _ $name >],) *);
                     }
                     fn inputs(&self) -> std:: vec:: Vec < $crate:: core:: Value > {
                         return[
-                            $(self.[< _ $vname >].clone().upgrade_as_value(),) *
+                            $(self.[< _ $input_name >].clone().upgrade_as_value(),) *
                         ].into_iter().filter_map(|x| x).collect();
                     }
                 }
                 // #
                 //
                 // INST
+                $(let[< _ $output_name >] = $output_val; $pcval.mark_new_output_value([< _ $output_name >].id());) * 
+                //. .
                 $crate:: Link:: new($pcval, _Link {
                     //. x
-                    $([< _ $vname >]: $vval,) * 
+                    $([< _ $input_name >]: $input_val,) * 
+                    //. x
+                    $([< _ $output_name >]:[< _ $output_name >],) * 
                     //. x
                     $([< _ $name >]: $val,) * 
                     //. x
                     f:| $pcname,
-                    $($vname,) * $($name,) *|-> Option <() > {
+                    //. .
+                    $($input_name,) * 
+                    //. .
+                    $($output_name,) * 
+                    //. .
+                    $($name,) *
+                    //. .
+                    |-> Option <() > {
                         $body;
                         return None;
                     }
@@ -128,7 +198,7 @@ fn basic0() {
                 let Some(a) = self.a.upgrade() else {
                     return;
                 };
-                self.value.set(pc, a.borrow().get() + 5);
+                self.value.set(pc, a.get() + 5);
             }
 
             fn inputs(&self) -> std::vec::Vec<Value> {
@@ -143,5 +213,5 @@ fn basic0() {
         a.set(pc, 46);
         return (a, b, _link);
     });
-    assert_eq!(*b.borrow().get(), 51);
+    assert_eq!(b.get(), 51);
 }

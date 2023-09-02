@@ -8,10 +8,11 @@ use std::{
         RefCell,
         Ref,
     },
+    ops::Deref,
 };
 use crate::core::{
     Id,
-    _IntValueTrait,
+    ValueTrait,
     ProcessingContext,
     UpgradeValue,
     Value,
@@ -19,13 +20,13 @@ use crate::core::{
     Link_,
 };
 
-pub struct _PrimMut<T: PartialEq + Clone> {
+pub struct PrimMut_<T: PartialEq + Clone> {
     value: T,
     previous_value: Option<T>,
     next: Vec<Weak<Link_>>,
 }
 
-impl<T: PartialEq + Clone + 'static> _PrimMut<T> {
+impl<T: PartialEq + Clone + 'static> PrimMut_<T> {
     pub fn get(&self) -> &T {
         return &self.value;
     }
@@ -33,10 +34,10 @@ impl<T: PartialEq + Clone + 'static> _PrimMut<T> {
 
 pub(crate) struct Prim_<T: PartialEq + Clone> {
     pub(crate) id: Id,
-    mut_: RefCell<_PrimMut<T>>,
+    mut_: RefCell<PrimMut_<T>>,
 }
 
-impl<T: PartialEq + Clone> _IntValueTrait for Prim_<T> {
+impl<T: PartialEq + Clone> ValueTrait for Prim_<T> {
     fn id(&self) -> Id {
         return self.id;
     }
@@ -52,6 +53,7 @@ impl<T: PartialEq + Clone> Cleanup for Prim_<T> {
     }
 }
 
+/// This represents a non-collection value, like an int, bool, or struct.
 #[derive(Clone)]
 pub struct Prim<T: PartialEq + Clone>(pub(crate) Rc<Prim_<T>>);
 
@@ -61,10 +63,9 @@ pub struct WeakPrim<T: PartialEq + Clone>(Weak<Prim_<T>>);
 impl<T: PartialEq + Clone + 'static> Prim<T> {
     pub fn new(pc: &mut ProcessingContext, initial: T) -> Self {
         let id = pc.1.take_id();
-        pc.1.new_values.insert(id);
         return Prim(Rc::new(Prim_ {
             id: id,
-            mut_: RefCell::new(_PrimMut {
+            mut_: RefCell::new(PrimMut_ {
                 value: initial,
                 previous_value: None,
                 next: vec![],
@@ -72,6 +73,11 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
         }));
     }
 
+    pub fn id(&self) -> Id {
+        return self.0.id;
+    }
+
+    /// Get a weak reference to the list.
     pub fn weak(&self) -> WeakPrim<T> {
         return WeakPrim(Rc::downgrade(&self.0));
     }
@@ -102,11 +108,12 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
         }
     }
 
-    /// Immutable access to the data.
-    pub fn borrow<'a>(&'a self) -> Ref<'a, _PrimMut<T>> {
-        return self.0.mut_.borrow();
+    /// Immutable access to the data via a `Deref` wrapper.
+    pub fn borrow<'a>(&'a self) -> ValueRef<'a, T> {
+        return ValueRef(self.0.mut_.borrow());
     }
 
+    /// Get the internal value.  This copies/clones the value.
     pub fn get(&self) -> T {
         return self.0.mut_.borrow().value.clone();
     }
@@ -122,10 +129,24 @@ impl<T: PartialEq + Clone + 'static> WeakPrim<T> {
     pub fn upgrade(&self) -> Option<Prim<T>> {
         return Some(Prim(self.0.upgrade()?));
     }
+
+    pub fn id(&self) -> Id {
+        return self.upgrade().unwrap().id();
+    }
 }
 
 impl<T: PartialEq + Clone + 'static> UpgradeValue for WeakPrim<T> {
     fn upgrade_as_value(&self) -> Option<Value> {
         return self.0.upgrade().map(|x| Value(x));
+    }
+}
+
+pub struct ValueRef<'a, T: PartialEq + Clone + 'static>(Ref<'a, PrimMut_<T>>);
+
+impl<'a, T: PartialEq + Clone + 'static> Deref for ValueRef<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        return &self.0.value;
     }
 }

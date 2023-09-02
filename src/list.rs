@@ -11,7 +11,7 @@ use std::{
 };
 use crate::core::{
     Id,
-    _IntValueTrait,
+    ValueTrait,
     ProcessingContext,
     UpgradeValue,
     Value,
@@ -36,7 +36,7 @@ struct List_<T: Clone> {
     mut_: RefCell<ListMut_<T>>,
 }
 
-impl<T: Clone> _IntValueTrait for List_<T> {
+impl<T: Clone> ValueTrait for List_<T> {
     fn id(&self) -> Id {
         return self.id;
     }
@@ -52,6 +52,7 @@ impl<T: Clone> Cleanup for List_<T> {
     }
 }
 
+/// A value that manages an ordered list of values.
 #[derive(Clone)]
 pub struct List<T: Clone>(Rc<List_<T>>);
 
@@ -61,7 +62,6 @@ pub struct WeakList<T: Clone>(Weak<List_<T>>);
 impl<T: Clone + 'static> List<T> {
     pub fn new(pc: &mut ProcessingContext, initial: std::vec::Vec<T>) -> Self {
         let id = pc.1.take_id();
-        pc.1.new_values.insert(id);
         return List(Rc::new(List_ {
             id: id,
             mut_: RefCell::new(ListMut_ {
@@ -72,6 +72,11 @@ impl<T: Clone + 'static> List<T> {
         }));
     }
 
+    pub fn id(&self) -> Id {
+        return self.0.id;
+    }
+
+    /// Get a weak reference to the list.
     pub fn weak(&self) -> WeakList<T> {
         return WeakList(Rc::downgrade(&self.0));
     }
@@ -84,6 +89,9 @@ impl<T: Clone + 'static> List<T> {
         remove: usize,
         add: std::vec::Vec<T>,
     ) -> std::vec::Vec<T> {
+        if remove == 0 && add.is_empty() {
+            return vec![];
+        }
         let first_change = self2.changes.is_empty();
         let out = self2.value.splice(offset .. offset + remove, add.clone()).collect();
         self2.changes.push(Change {
@@ -109,7 +117,7 @@ impl<T: Clone + 'static> List<T> {
         return out;
     }
 
-    /// Modify the value and mark downstream links as needing to be rerun.
+    /// Modify the value; triggers processing.
     pub fn splice(
         &self,
         pc: &mut ProcessingContext,
@@ -121,32 +129,58 @@ impl<T: Clone + 'static> List<T> {
         return self.splice_(&mut self2, pc, offset, remove, add);
     }
 
+    /// Add one element; triggers processing.
     pub fn push(&self, pc: &mut ProcessingContext, value: T) {
         let mut self2 = self.0.mut_.borrow_mut();
         let len = self2.value.len();
         self.splice_(&mut self2, pc, len, 0, vec![value]);
     }
 
+    /// Remove one element, return the element or None if the list was empty; triggers
+    /// processing.
+    pub fn pop(&self, pc: &mut ProcessingContext) -> Option<T> {
+        let mut self2 = self.0.mut_.borrow_mut();
+        let len = self2.value.len();
+        if len == 0 {
+            return None;
+        }
+        return self.splice_(&mut self2, pc, len - 1, 1, vec![]).into_iter().next();
+    }
+
+    /// Add multiple elements; triggers processing.
     pub fn extend(&self, pc: &mut ProcessingContext, values: std::vec::Vec<T>) {
         let mut self2 = self.0.mut_.borrow_mut();
         let len = self2.value.len();
         self.splice_(&mut self2, pc, len, 0, values);
     }
 
-    /// Clears the collection, triggering updates.
+    /// Clears the collection; triggers processing.
     pub fn clear(&self, pc: &mut ProcessingContext) {
         let mut self2 = self.0.mut_.borrow_mut();
         let len = self2.value.len();
         self.splice_(&mut self2, pc, 0, len, vec![]);
     }
 
-    /// The current state of this vec.
+    /// Reduce the length of the collection to len, if longer.  Triggers processing.
+    pub fn truncate(&self, pc: &mut ProcessingContext, len: usize) {
+        let mut self2 = self.0.mut_.borrow_mut();
+        let current_len = self2.value.len();
+        if current_len > len {
+            self.splice_(&mut self2, pc, len, current_len - len, vec![]);
+        }
+    }
+
+    /// The current state of this vec.  A `Deref` wrapper around the internal `Vec`. If
+    /// you want to iterate them, you'll need to call `.iter()` explicitly due to deref
+    /// limitations.
     pub fn values<'a>(&'a self) -> ValuesRef<'a, T> {
         return ValuesRef(self.0.mut_.borrow());
     }
 
     /// Any changes during the current event handling that occurred to value to get it
-    /// to its current state.
+    /// to its current state.  You can use them as splice inputs for a second list to
+    /// synchronize them.  A `Deref` wrapper around an internal `Vec`.  If you want to
+    /// iterate them, you'll need to call `.iter()` explicitly due to deref limitations.
     pub fn changes<'a>(&'a self) -> ChangesRef<'a, T> {
         return ChangesRef(self.0.mut_.borrow());
     }
@@ -161,6 +195,10 @@ impl<T: Clone + 'static> UpgradeValue for List<T> {
 impl<T: Clone + 'static> WeakList<T> {
     pub fn upgrade(&self) -> Option<List<T>> {
         return Some(List(self.0.upgrade()?));
+    }
+
+    pub fn id(&self) -> Id {
+        return self.upgrade().unwrap().id();
     }
 }
 
