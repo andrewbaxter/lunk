@@ -9,7 +9,6 @@ Compared to other tools, this library focuses on ease of use, flexibility, and c
 - You can represent a full graph, including cycles
 - Data has simple, lifetime-less types (`Prim<i32>`, `List<i32>`, etc) which makes it simple to pass around and store in structures
 - Handles graph modifications during graph processing - new nodes will be processed after their dependencies
-- A macro for generating links, but implementing it by hand requires minimal boilerplate
 - Animation/easing property changes
 
 This only handles synchronous graph processing at the moment. Asynchronous events are not handled.
@@ -37,10 +36,10 @@ fn main() {
         let _link =
             lunk::link!(
                 (ctx = pc),
-                (input_a = input_a.weak(), input_b = input_b.weak()),
-                (output = output.weak()),
+                (input_a = input_a.clone(), input_b = input_b.clone()),
+                (output = output.clone()),
                 () {
-                    output.upgrade()?.set(ctx, input_a.upgrade()?.get() as f32 * input_b.upgrade()?.get() + 5.);
+                    output.set(ctx, input_a.get() as f32 * input_b.get() + 5.);
                 }
             );
         input_a.set(pc, 46);
@@ -56,11 +55,9 @@ See `link!` documentation for a detailed explanation. Links can be manually (wit
 
 ## Ownership
 
-Values have no references to other values or links.
+Values have weak references to dependent links and no references to the links that write to them. This means that there are no rc-leaking cycles in the graph structure itself.
 
-Links have strong/weak references to values depending on how you captured them.
-
-Generally, to avoid reference cycles, capturing only weak links and making the creator responsible for ownership of everything (values, links) is probably the simplest way to manage ownership. In some circumstances, e.g. for intermediate values for chains of transformation, it might make sense to capture those inputs as strong references so you only need to keep ownership of the consuming links.
+Links must be kept alive for the duration you want them to trigger. If a link is dropped, it will stop activating during events.
 
 ## Animation
 
@@ -140,7 +137,7 @@ If you read down, it should say something like "closures can only be coerced to 
 
 All captures in links created with `link!` need to be in one of the `()` at the start.
 
-In VS Code I need to click the button to see the full error before it shows which value is implicitly captured.
+In VS Code I need to click the link to see the full error before it shows which value is implicitly captured.
 
 ### Unreachable statement
 

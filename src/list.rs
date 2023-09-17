@@ -9,14 +9,17 @@ use std::{
     },
     ops::Deref,
 };
-use crate::core::{
-    Id,
-    ValueTrait,
-    ProcessingContext,
-    UpgradeValue,
-    Value,
-    Cleanup,
-    Link_,
+use crate::{
+    core::{
+        Id,
+        ValueTrait,
+        ProcessingContext,
+        Cleanup,
+        Link_,
+        IntoValue,
+        Value,
+    },
+    Link,
 };
 
 pub struct Change<T: Clone> {
@@ -31,6 +34,25 @@ pub struct ListMut_<T: Clone> {
     next: std::vec::Vec<Weak<Link_>>,
 }
 
+impl<T: Clone> ListMut_<T> {
+    fn next(&mut self) -> Vec<crate::Link> {
+        let mut out = vec![];
+        out.reserve(self.next.len());
+        self.next.retain_mut(|e| {
+            match e.upgrade() {
+                Some(e) => {
+                    out.push(Link(e.clone()));
+                    return true;
+                },
+                None => {
+                    return false;
+                },
+            }
+        });
+        return out;
+    }
+}
+
 struct List_<T: Clone> {
     id: Id,
     mut_: RefCell<ListMut_<T>>,
@@ -41,8 +63,8 @@ impl<T: Clone> ValueTrait for List_<T> {
         return self.id;
     }
 
-    fn add_next(&self, link: Weak<Link_>) {
-        self.mut_.borrow_mut().next.push(link);
+    fn next(&self) -> Vec<crate::Link> {
+        return self.mut_.borrow_mut().next();
     }
 }
 
@@ -76,6 +98,12 @@ impl<T: Clone + 'static> List<T> {
         return self.0.id;
     }
 
+    /// Used internally by the `link!` macro to establish graph edges between an input
+    /// value and the link.
+    pub fn add_next(&self, link: &Link) {
+        self.0.mut_.borrow_mut().next.push(Rc::downgrade(&link.0));
+    }
+
     /// Get a weak reference to the list.
     pub fn weak(&self) -> WeakList<T> {
         return WeakList(Rc::downgrade(&self.0));
@@ -101,18 +129,11 @@ impl<T: Clone + 'static> List<T> {
         });
         if first_change {
             pc.1.cleanup.push(self.0.clone());
-            self2.next.retain_mut(|l| {
-                let Some(l) = l.upgrade() else {
-                    return false;
-                };
-                if pc.1.processed_links.contains(&l.id) {
-                    return true;
+            if !pc.1.processing {
+                for l in self2.next() {
+                    pc.1.roots.insert(l.0.id, l.clone());
                 }
-                if l.dec_dep_pending() <= 0 {
-                    pc.1.queued_links.push(Rc::downgrade(&l));
-                }
-                return true;
-            });
+            }
         }
         return out;
     }
@@ -173,7 +194,9 @@ impl<T: Clone + 'static> List<T> {
     /// The current state of this vec.  A `Deref` wrapper around the internal `Vec`. If
     /// you want to iterate them, you'll need to call `.iter()` explicitly due to deref
     /// limitations.
-    pub fn values<'a>(&'a self) -> ValuesRef<'a, T> {
+    ///
+    /// Borrows the list, must be released before calling other mutate methods.
+    pub fn borrow_values<'a>(&'a self) -> ValuesRef<'a, T> {
         return ValuesRef(self.0.mut_.borrow());
     }
 
@@ -181,14 +204,16 @@ impl<T: Clone + 'static> List<T> {
     /// to its current state.  You can use them as splice inputs for a second list to
     /// synchronize them.  A `Deref` wrapper around an internal `Vec`.  If you want to
     /// iterate them, you'll need to call `.iter()` explicitly due to deref limitations.
-    pub fn changes<'a>(&'a self) -> ChangesRef<'a, T> {
+    ///
+    /// Borrows the list, must be released before calling other mutate methods.
+    pub fn borrow_changes<'a>(&'a self) -> ChangesRef<'a, T> {
         return ChangesRef(self.0.mut_.borrow());
     }
 }
 
-impl<T: Clone + 'static> UpgradeValue for List<T> {
-    fn upgrade_as_value(&self) -> Option<Value> {
-        return Some(Value(self.0.clone()));
+impl<T: Clone + 'static> IntoValue for List<T> {
+    fn into_value(&self) -> Value {
+        return Value(self.0.clone());
     }
 }
 
@@ -199,12 +224,6 @@ impl<T: Clone + 'static> WeakList<T> {
 
     pub fn id(&self) -> Id {
         return self.upgrade().unwrap().id();
-    }
-}
-
-impl<T: Clone + 'static> UpgradeValue for WeakList<T> {
-    fn upgrade_as_value(&self) -> Option<Value> {
-        return self.0.upgrade().map(|x| Value(x));
     }
 }
 

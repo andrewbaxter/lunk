@@ -29,7 +29,7 @@ pub use paste;
 /// explicitly defined up front. The macro takes the form of a function definition
 /// with multiple parentheses for different capture groups.
 ///
-/// ```rust
+/// ```ignore
 /// let _link = link!(
 ///   (CONTEXT KVS),
 ///   (INPUT KVS),
@@ -110,9 +110,9 @@ macro_rules! link{
                 // IMPL
                 impl < 
                 //. x
-                $([< _ $input_name: upper >]: Clone + $crate:: core:: UpgradeValue,) * 
+                $([< _ $input_name: upper >]: Clone,) * 
                 //. x
-                $([< _ $output_name: upper >],) * 
+                $([< _ $output_name: upper >]: Clone + $crate:: core:: IntoValue,) * 
                 //. x
                 $([< _ $name: upper >],) *
                 //. _
@@ -134,22 +134,22 @@ macro_rules! link{
                             //. .
                             $(& self.[< _ $name >],) *);
                     }
-                    fn inputs(&self) -> std:: vec:: Vec < $crate:: core:: Value > {
-                        return[
-                            $(self.[< _ $input_name >].clone().upgrade_as_value(),) *
-                        ].into_iter().filter_map(|x| x).collect();
+                    fn next(&self) -> std:: vec:: Vec < $crate:: core:: Value > {
+                        return vec![
+                            $(< dyn $crate:: core:: IntoValue >:: into_value(& self.[< _ $output_name >]),) *
+                        ];
                     }
                 }
                 // #
                 //
                 // INST
-                $(let[< _ $output_name >] = $output_val; $pcval.mark_new_output_value([< _ $output_name >].id());) * 
+                $(let[< _ $input_name >] = $input_val;) * 
                 //. .
-                $crate:: Link:: new($pcval, _Link {
+                let out = $crate:: Link:: new($pcval, _Link {
                     //. x
-                    $([< _ $input_name >]: $input_val,) * 
+                    $([< _ $input_name >]:[< _ $input_name >].clone(),) * 
                     //. x
-                    $([< _ $output_name >]:[< _ $output_name >],) * 
+                    $([< _ $output_name >]: $output_val,) * 
                     //. x
                     $([< _ $name >]: $val,) * 
                     //. x
@@ -165,7 +165,11 @@ macro_rules! link{
                         $body;
                         return None;
                     }
-                })
+                });
+                //. .
+                $([< _ $input_name >].add_next(&out);) * 
+                //. .
+                out
             }
         }
     };
@@ -176,7 +180,6 @@ fn basic0() {
     use crate::{
         core::{
             Value,
-            UpgradeValue,
         },
         prim::{
             WeakPrim,
@@ -201,8 +204,8 @@ fn basic0() {
                 self.value.set(pc, a.get() + 5);
             }
 
-            fn inputs(&self) -> std::vec::Vec<Value> {
-                return [self.a.clone()].into_iter().filter_map(|x| x.upgrade_as_value()).collect();
+            fn next(&self) -> Vec<Value> {
+                return vec![Value(self.value.0.clone())];
             }
         }
 

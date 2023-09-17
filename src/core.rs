@@ -1,11 +1,9 @@
 use std::{
     rc::{
         Rc,
-        Weak,
     },
     cell::{
         RefCell,
-        Cell,
     },
     collections::{
         HashMap,
@@ -17,22 +15,20 @@ use std::{
 /// invalid.
 pub type Id = usize;
 pub const NULL_ID: Id = 0;
-type PendingCount = i32;
 
-pub(crate) trait ValueTrait {
+pub trait ValueTrait {
     fn id(&self) -> Id;
-    fn add_next(&self, link: Weak<Link_>);
+    fn next(&self) -> Vec<Link>;
 }
 
 pub struct Value(pub(crate) Rc<dyn ValueTrait>);
 
-pub(crate) trait Cleanup {
-    fn clean(&self);
+pub trait IntoValue {
+    fn into_value(&self) -> Value;
 }
 
-/// Helper method for implementing `inputs` in `LinkTrait`.
-pub trait UpgradeValue {
-    fn upgrade_as_value(&self) -> Option<Value>;
+pub(crate) trait Cleanup {
+    fn clean(&self);
 }
 
 /// Behavior required for manually defining links.
@@ -41,41 +37,13 @@ pub trait LinkTrait {
     /// if there's at least one dirty input.
     fn call(&self, pc: &mut ProcessingContext);
 
-    /// Returns inputs (as `Value` trait for generic processing).
-    fn inputs(&self) -> Vec<Value>;
+    /// Returns outputs (downstream values; as `Value` trait for generic processing).
+    fn next(&self) -> Vec<Value>;
 }
 
 pub(crate) struct Link_ {
     pub(crate) id: Id,
     inner: Box<dyn LinkTrait>,
-    pending_inputs: Cell<PendingCount>,
-}
-
-impl Link_ {
-    pub(crate) fn process(&self, pc: &mut ProcessingContext) {
-        self.inner.call(pc);
-    }
-
-    pub(crate) fn deps(&self) -> Vec<Value> {
-        return self.inner.inputs();
-    }
-
-    pub(crate) fn set_dep_pending(&self, count: PendingCount) {
-        self.pending_inputs.set(count);
-    }
-
-    pub(crate) fn dec_dep_pending(&self) -> PendingCount {
-        let mut p = self.pending_inputs.get();
-        p -= 1;
-        self.pending_inputs.set(p);
-        return p;
-    }
-}
-
-impl Cleanup for Link_ {
-    fn clean(&self) {
-        self.pending_inputs.set(self.deps().len() as PendingCount);
-    }
 }
 
 /// A link, representing processing taking some inputs and modifying outputs.  This
@@ -94,24 +62,28 @@ impl Link {
     /// exists, dropping it will deactivate that graph path.
     #[must_use]
     pub fn new(pc: &mut ProcessingContext, inner: impl LinkTrait + 'static) -> Self {
-        let pending = inner.inputs().len() as PendingCount;
         let id = pc.1.take_id();
         let out = Link(Rc::new(Link_ {
             id: id,
             inner: Box::new(inner),
-            pending_inputs: Cell::new(pending),
         }));
-        pc.1.new_links.insert(id, Rc::downgrade(&out.0));
+        pc.1.stg1_queued_links.push(out.clone());
         return out;
     }
 }
 
 pub struct _Context {
-    pub(crate) new_links: HashMap<Id, Weak<Link_>>,
-    pub(crate) queued_links: Vec<Weak<Link_>>,
-    pub(crate) processed_links: HashSet<Id>,
-    pub(crate) new_output_values: HashSet<Id>,
+    pub(crate) roots: HashMap<Id, Link>,
+    pub(crate) stg1_queued_links: Vec<Link>,
+    pub(crate) affected_links: HashSet<Id>,
+    pub(crate) stg2_leaves: Vec<Link>,
+    pub(crate) stg2_up: HashMap<Id, Vec<Link>>,
+    pub(crate) stg2_queued_links: Vec<(bool, Link)>,
+    pub(crate) stg2_seen_links: HashSet<Id>,
+    pub(crate) stg2_seen_up: HashSet<Id>,
+    pub(crate) stg2_buf_delay: Vec<Link>,
     pub(crate) cleanup: Vec<Rc<dyn Cleanup>>,
+    pub(crate) processing: bool,
     ids: usize,
 }
 
@@ -135,11 +107,17 @@ pub struct ProcessingContext<'a>(pub(crate) &'a EventGraph, pub(crate) &'a mut _
 impl EventGraph {
     pub fn new() -> EventGraph {
         return EventGraph(Rc::new(RefCell::new(_Context {
-            new_links: Default::default(),
-            queued_links: Default::default(),
-            processed_links: Default::default(),
-            new_output_values: Default::default(),
+            roots: Default::default(),
+            stg1_queued_links: Default::default(),
+            affected_links: Default::default(),
+            stg2_leaves: Default::default(),
+            stg2_up: Default::default(),
+            stg2_queued_links: Default::default(),
+            stg2_seen_links: Default::default(),
+            stg2_seen_up: Default::default(),
+            stg2_buf_delay: Default::default(),
             cleanup: vec![],
+            processing: false,
             ids: 1,
         })));
     }
@@ -153,52 +131,78 @@ impl EventGraph {
 
         // Do initial changes (modifying values, modifying graph)
         let out = f(&mut ProcessingContext(self, &mut *s));
+        s.processing = true;
+        let queue_roots: Vec<Link> = s.roots.values().cloned().collect();
+        s.stg1_queued_links.extend(queue_roots);
 
-        // Walk the graph starting from dirty nodes, processing callbacks in order
-        while let Some(l) = s.queued_links.pop().and_then(|l| l.upgrade()) {
-            if !s.processed_links.insert(l.id) {
-                continue;
-            }
-            l.as_ref().process(&mut ProcessingContext(self, &mut *s));
-            s.cleanup.push(l);
-        }
-
-        // Walk the (not yet connected) subgraph of new nodes in order to immediately
-        // activate all new nodes. This relies on graph additions being offshoots of the
-        // existing graph (i.e. nothing in the existing graph depends on the additions).
-        let new: Vec<(Id, Weak<Link_>)> = s.new_links.drain().collect();
-        for l in new.into_iter().filter_map(|(_, e)| e.upgrade()) {
-            let mut new_count = 0 as PendingCount;
-            for prev in l.deps() {
-                // Attach to graph
-                prev.0.add_next(Rc::downgrade(&l));
-
-                // For new links, assume all inputs that are already in the graph have changed, as
-                // well as root input values for new links.  That means only values that are
-                // outputs of new links should be considered pending and therefore ordered after.
-                if s.new_output_values.contains(&prev.0.id()) {
-                    new_count += 1;
+        // Process graph (repeatedly, for new subgraph updates during processing)
+        while !s.stg1_queued_links.is_empty() {
+            // Walk graph once, starting from (links downstream from) modified values and new
+            // links, to:
+            //
+            // * Identify affected links for next pass
+            //
+            // * Identify leaves to start next pass
+            //
+            // * Build deps tree from reverse deps
+            while let Some(link) = s.stg1_queued_links.pop() {
+                if !s.affected_links.insert(link.0.id) {
+                    continue;
+                }
+                let mut has_next = false;
+                for next_val in link.0.inner.next() {
+                    for next_link in next_val.0.next() {
+                        has_next = true;
+                        s.stg1_queued_links.push(next_link.clone());
+                        s.stg2_up.entry(next_link.0.id).or_insert_with(Vec::new).push(link.clone());
+                    }
+                }
+                if !has_next {
+                    s.stg2_leaves.push(link);
                 }
             }
-            l.set_dep_pending(new_count);
-            if new_count == 0 {
-                s.queued_links.push(Rc::downgrade(&l));
+
+            // Walk deps from leaves, only considering affected nodes
+            let queue_leaves: Vec<(bool, Link)> = s.stg2_leaves.drain(0..).map(|l| (true, l)).collect();
+            s.stg2_queued_links.extend(queue_leaves);
+            while let Some((first, link)) = s.stg2_queued_links.pop() {
+                if first {
+                    if !s.stg2_seen_links.insert(link.0.id) {
+                        continue;
+                    }
+                    s.stg2_queued_links.push((false, link.clone()));
+                    for prev_link in s.stg2_up.remove(&link.0.id).unwrap_or(vec![]) {
+                        if !s.stg2_seen_up.insert(prev_link.0.id) {
+                            continue;
+                        }
+                        if !s.affected_links.contains(&prev_link.0.id) {
+                            continue;
+                        }
+                        if s.roots.contains_key(&prev_link.0.id) {
+                            // Roots (modified nodes) pushed to the queue last so they're processed first,
+                            // breaking cycles
+                            s.stg2_buf_delay.push(prev_link);
+                        } else {
+                            s.stg2_queued_links.push((true, prev_link));
+                        }
+                    }
+                    while let Some(prev_link) = s.stg2_buf_delay.pop() {
+                        s.stg2_queued_links.push((true, prev_link));
+                    }
+                    s.stg2_seen_up.clear();
+                } else {
+                    (link.0.inner).call(&mut ProcessingContext(self, &mut s));
+                }
             }
+            s.stg2_seen_links.clear();
         }
-        while let Some(l) = s.queued_links.pop().and_then(|e| e.upgrade()) {
-            if !s.processed_links.insert(l.id) {
-                continue;
-            }
-            l.as_ref().process(&mut ProcessingContext(self, &mut *s));
-            s.cleanup.push(l);
-        }
+        s.affected_links.clear();
 
         // Cleanup
-        s.new_output_values.clear();
-        s.processed_links.clear();
         for p in s.cleanup.drain(0..) {
             p.clean();
         }
+        s.processing = false;
         return out;
     }
 }
@@ -208,10 +212,5 @@ impl<'a> ProcessingContext<'a> {
     /// pass it around along with the processing context).
     pub fn eg(&self) -> EventGraph {
         return self.0.clone();
-    }
-
-    /// Used for manual link implementation.  See `Link::new` for details.
-    pub fn mark_new_output_value(&mut self, id: Id) {
-        self.1.new_output_values.insert(id);
     }
 }

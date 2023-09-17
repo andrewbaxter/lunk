@@ -10,14 +10,17 @@ use std::{
     },
     ops::Deref,
 };
-use crate::core::{
-    Id,
-    ValueTrait,
-    ProcessingContext,
-    UpgradeValue,
-    Value,
-    Cleanup,
-    Link_,
+use crate::{
+    core::{
+        Id,
+        ValueTrait,
+        ProcessingContext,
+        Cleanup,
+        Link_,
+        Value,
+        IntoValue,
+    },
+    Link,
 };
 
 pub struct PrimMut_<T: PartialEq + Clone> {
@@ -42,8 +45,22 @@ impl<T: PartialEq + Clone> ValueTrait for Prim_<T> {
         return self.id;
     }
 
-    fn add_next(&self, link: Weak<Link_>) {
-        self.mut_.borrow_mut().next.push(link);
+    fn next(&self) -> Vec<crate::Link> {
+        let mut out = vec![];
+        let mut self2 = self.mut_.borrow_mut();
+        out.reserve(self2.next.len());
+        self2.next.retain_mut(|e| {
+            match e.upgrade() {
+                Some(e) => {
+                    out.push(Link(e.clone()));
+                    return true;
+                },
+                None => {
+                    return false;
+                },
+            }
+        });
+        return out;
     }
 }
 
@@ -77,6 +94,12 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
         return self.0.id;
     }
 
+    /// Used internally by the `link!` macro to establish graph edges between an input
+    /// value and the link.
+    pub fn add_next(&self, link: &Link) {
+        self.0.mut_.borrow_mut().next.push(Rc::downgrade(&link.0));
+    }
+
     /// Get a weak reference to the list.
     pub fn weak(&self) -> WeakPrim<T> {
         return WeakPrim(Rc::downgrade(&self.0));
@@ -84,27 +107,23 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
 
     /// Modify the value and mark downstream links as needing to be rerun.
     pub fn set(&self, pc: &mut ProcessingContext, mut value: T) {
-        let mut self2 = self.0.mut_.borrow_mut();
-        if self2.value == value {
-            return;
+        let first_change;
+        {
+            let mut self2 = self.0.mut_.borrow_mut();
+            if self2.value == value {
+                return;
+            }
+            swap(&mut self2.value, &mut value);
+            first_change = self2.previous_value.is_none();
+            self2.previous_value = Some(value);
         }
-        swap(&mut self2.value, &mut value);
-        let first_change = self2.previous_value.is_none();
-        self2.previous_value = Some(value);
         if first_change {
             pc.1.cleanup.push(self.0.clone());
-            self2.next.retain_mut(|l| {
-                let Some(l) = l.upgrade() else {
-                    return false;
-                };
-                if pc.1.processed_links.contains(&l.id) {
-                    return true;
+            if !pc.1.processing {
+                for l in self.0.next() {
+                    pc.1.roots.insert(l.0.id, l.clone());
                 }
-                if l.dec_dep_pending() <= 0 {
-                    pc.1.queued_links.push(Rc::downgrade(&l));
-                }
-                return true;
-            });
+            }
         }
     }
 
@@ -117,11 +136,17 @@ impl<T: PartialEq + Clone + 'static> Prim<T> {
     pub fn get(&self) -> T {
         return self.0.mut_.borrow().value.clone();
     }
+
+    /// Get the previous version of the value.  This copies/clones the value.
+    pub fn get_old(&self) -> T {
+        let m = self.0.mut_.borrow();
+        return m.previous_value.as_ref().unwrap_or_else(|| &m.value).clone();
+    }
 }
 
-impl<T: PartialEq + Clone + 'static> UpgradeValue for Prim<T> {
-    fn upgrade_as_value(&self) -> Option<Value> {
-        return Some(Value(self.0.clone()));
+impl<T: PartialEq + Clone + 'static> IntoValue for Prim<T> {
+    fn into_value(&self) -> Value {
+        return Value(self.0.clone());
     }
 }
 
@@ -132,12 +157,6 @@ impl<T: PartialEq + Clone + 'static> WeakPrim<T> {
 
     pub fn id(&self) -> Id {
         return self.upgrade().unwrap().id();
-    }
-}
-
-impl<T: PartialEq + Clone + 'static> UpgradeValue for WeakPrim<T> {
-    fn upgrade_as_value(&self) -> Option<Value> {
-        return self.0.upgrade().map(|x| Value(x));
     }
 }
 
