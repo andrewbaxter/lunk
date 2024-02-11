@@ -159,6 +159,12 @@ Possible causes
 
   If you have the inputs in the wrong macro KV group they won't be acknowledged as a graph connection, so changes to dependencies won't trigger the callback.
 
+### My callback is firing (leaked)
+
+Possible causes
+
+- The callback captures the item that owns it.  For example, you did `link!` and captured an html element that the `link!` modifies.  You should change the capture to a weak reference.
+
 # Why flexibility over performance
 
 The main gains from these libraries come from helping you avoid costly work. The more flexible, the more work it'll help you avoid.

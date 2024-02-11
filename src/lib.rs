@@ -11,13 +11,14 @@ pub use crate::core::{
 };
 pub use crate::prim::{
     Prim,
+    HistPrim,
 };
 pub use crate::list::{
     List,
 };
 pub use crate::animate::{
     Animator,
-    PrimEaseExt,
+    HistPrimEaseExt,
 };
 pub use paste;
 

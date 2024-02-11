@@ -197,6 +197,14 @@ impl EventGraph {
             s.stg2_seen_links.clear();
         }
         s.affected_links.clear();
+        s.roots.clear();
+        debug_assert!(s.stg1_queued_links.is_empty());
+        debug_assert!(s.stg2_leaves.is_empty());
+        debug_assert!(s.stg2_up.is_empty());
+        debug_assert!(s.stg2_queued_links.is_empty());
+        debug_assert!(s.stg2_seen_links.is_empty());
+        debug_assert!(s.stg2_seen_up.is_empty());
+        debug_assert!(s.stg2_buf_delay.is_empty());
 
         // Cleanup
         for p in s.cleanup.drain(0..) {
