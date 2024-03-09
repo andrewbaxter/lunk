@@ -181,7 +181,8 @@ impl Animator {
     /// `requestAnimationFrame` for example, in a WASM context. Returns true as long as
     /// there are animations to continue.
     pub fn update(&self, eg: &EventGraph, delta_ms: f64) -> bool {
-        return eg.event(|pc| {
+        let mut out = None;
+        eg.event(|pc| {
             let mut interp = {
                 let mut self2 = self.0.borrow_mut();
                 let mut interp = self2.interp_backbuf.take().unwrap();
@@ -196,7 +197,10 @@ impl Animator {
                 }
             }
             self.0.borrow_mut().interp_backbuf = Some(interp);
-            return alive;
+            out = Some(alive);
         });
+        return out.expect(
+            "Update should be called at the root of an independent event but was called while another event was in progress",
+        );
     }
 }

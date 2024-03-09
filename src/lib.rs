@@ -188,7 +188,10 @@ fn basic0() {
     };
 
     let eg = EventGraph::new();
-    let (_a, b, _link) = eg.event(|pc| {
+    let mut store_a = None;
+    let mut store_b = None;
+    let mut store_link = None;
+    eg.event(|pc| {
         let a = Prim::new(pc, 0);
         let b = Prim::new(pc, 0);
 
@@ -202,7 +205,7 @@ fn basic0() {
                 let Some(a) = self.a.upgrade() else {
                     return;
                 };
-                self.value.set(pc, a.get() + 5);
+                self.value.set(pc, *a.borrow() + 5);
             }
 
             fn next(&self) -> Vec<Value> {
@@ -215,7 +218,9 @@ fn basic0() {
             value: b.clone(),
         });
         a.set(pc, 46);
-        return (a, b, _link);
+        store_a = Some(a);
+        store_b = Some(b);
+        store_link = Some(_link);
     });
-    assert_eq!(b.get(), 51);
+    assert_eq!(*store_b.unwrap().borrow(), 51);
 }

@@ -126,8 +126,11 @@ impl EventGraph {
     /// should call this whenever an event happens (user input, remote notification,
     /// etc) as well as during initial setup, and do all graph manipulation from within
     /// the callback.
-    pub fn event<Z>(&self, f: impl FnOnce(&mut ProcessingContext) -> Z) -> Z {
+    pub fn event(&self, f: impl FnOnce(&mut ProcessingContext)) {
         let mut s = self.0.borrow_mut();
+        if s.processing {
+            return;
+        }
 
         // Do initial changes (modifying values, modifying graph)
         let out = f(&mut ProcessingContext(self, &mut *s));

@@ -9,234 +9,293 @@ use lunk::link;
 #[test]
 fn init_prim_link_prim() {
     let eg = lunk::EventGraph::new();
-    let (_input, output, _link) = eg.event(|pc| {
+    let mut store_input = None;
+    let mut store_output = None;
+    let mut store_link = None;
+    eg.event(|pc| {
         let input = lunk::Prim::new(pc, 0i32);
         let output = lunk::Prim::new(pc, 0f32);
         let _link = lunk::link!((pc = pc), (input = input.clone()), (output = output.clone()), () {
-            output.set(pc, input.get() as f32 + 5.);
+            output.set(pc, *input.borrow() as f32 + 5.);
         });
-        return (input, output, _link);
+        store_input = Some(input);
+        store_output = Some(output);
+        store_link = Some(_link);
     });
-    assert_eq!(output.get(), 5.);
+    assert_eq!(*store_output.unwrap().borrow(), 5.);
 }
 
 #[test]
 fn second_prim_link_prim() {
     let eg = lunk::EventGraph::new();
-    let (input, output, _link) = eg.event(|pc| {
+    let mut store_input = None;
+    let mut store_output = None;
+    let mut store_link = None;
+    eg.event(|pc| {
         let input = lunk::Prim::new(pc, 0i32);
         let output = lunk::Prim::new(pc, 0f32);
         let link = lunk::link!((pc = pc), (input = input.clone()), (output = output.clone()), () {
-            output.set(pc, input.get() as f32 + 5.);
+            output.set(pc, *input.borrow() as f32 + 5.);
         });
-        return (input, output, link);
+        store_input = Some(input);
+        store_output = Some(output);
+        store_link = Some(link);
     });
     eg.event(|pc| {
-        input.set(pc, 17);
+        store_input.unwrap().set(pc, 17);
     });
-    assert_eq!(output.get(), 22.);
+    assert_eq!(*store_output.unwrap().borrow(), 22.);
 }
 
 #[test]
 fn second_prim_link_prim_set_twice() {
     let eg = lunk::EventGraph::new();
-    let (input, output, _link) = eg.event(|pc| {
+    let mut store_input = None;
+    let mut store_output = None;
+    let mut store_link = None;
+    eg.event(|pc| {
         let input = lunk::Prim::new(pc, 0i32);
         let output = lunk::Prim::new(pc, 0f32);
         let link = lunk::link!((pc = pc), (input = input.clone()), (output = output.clone()), () {
-            output.set(pc, input.get() as f32 + 5.);
+            output.set(pc, *input.borrow() as f32 + 5.);
         });
-        return (input, output, link);
+        store_input = Some(input);
+        store_output = Some(output);
+        store_link = Some(link);
     });
     eg.event(|pc| {
-        input.set(pc, 17);
+        store_input.as_ref().unwrap().set(pc, 17);
     });
-    assert_eq!(output.get(), 22.);
+    assert_eq!(*store_output.as_ref().unwrap().borrow(), 22.);
     eg.event(|pc| {
-        input.set(pc, 3);
+        store_input.unwrap().set(pc, 3);
     });
-    assert_eq!(output.get(), 8.);
+    assert_eq!(*store_output.unwrap().borrow(), 8.);
 }
 
 #[test]
 fn second_prim_link_prim_link_prim() {
     let eg = lunk::EventGraph::new();
-    let (a, _b, _link_ab, c, _link_bc) = eg.event(|pc| {
+    let mut store_a = None;
+    let mut store_c = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
         let c = lunk::Prim::new(pc, 0i32);
         let link_ab = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
-            b.set(pc, a.get() + 5);
+            b.set(pc, *a.borrow() + 5);
         });
         let link_bc = lunk::link!((pc = pc), (b = b.clone()), (c = c.clone()), () {
-            c.set(pc, b.get() + 6);
+            c.set(pc, *b.borrow() + 6);
         });
-        return (a, b, link_ab, c, link_bc);
+        store_a = Some(a);
+        store_c = Some(c);
+        store_other = Some((b, link_ab, link_bc));
     });
     eg.event(|pc| {
-        a.set(pc, 17);
+        store_a.unwrap().set(pc, 17);
     });
-    assert_eq!(c.get(), 28);
+    assert_eq!(*store_c.unwrap().borrow(), 28);
 }
 
 #[test]
 fn second_prim_link_prim_link_prim_skiplevel() {
     let eg = lunk::EventGraph::new();
-    let (a, _b, _link_ab, c, _link_abc) = eg.event(|pc| {
+    let mut store_a = None;
+    let mut store_c = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
         let c = lunk::Prim::new(pc, 0i32);
         let link_ab = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
-            b.set(pc, a.get() + 5);
+            b.set(pc, *a.borrow() + 5);
         });
         let link_abc = lunk::link!((pc = pc), (a = a.clone(), b = b.clone()), (c = c.clone()), () {
-            c.set(pc, a.get() - b.get() + 6);
+            c.set(pc, *a.borrow() - *b.borrow() + 6);
         });
-        return (a, b, link_ab, c, link_abc);
+        store_a = Some(a);
+        store_c = Some(c);
+        store_other = Some((b, link_ab, link_abc));
     });
     eg.event(|pc| {
-        a.set(pc, 17);
+        store_a.unwrap().set(pc, 17);
     });
-    assert_eq!(c.get(), 1);
+    assert_eq!(*store_c.unwrap().borrow(), 1);
 }
 
 #[test]
 fn second_2prim_link_prim() {
     let eg = lunk::EventGraph::new();
-    let (_a, b, c, _link_abc) = eg.event(|pc| {
+    let mut store_b = None;
+    let mut store_c = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
         let c = lunk::Prim::new(pc, 0i32);
         let link = lunk::link!((pc = pc), (a = a.clone(), b = b.clone()), (c = c.clone()), () {
-            c.set(pc, a.get() + b.get() * 2 + 3);
+            c.set(pc, *a.borrow() + *b.borrow() * 2 + 3);
         });
-        return (a, b, c, link);
+        store_b = Some(b);
+        store_c = Some(c);
+        store_other = Some((a, link));
     });
     eg.event(|pc| {
-        b.set(pc, 17);
+        store_b.unwrap().set(pc, 17);
     });
-    assert_eq!(c.get(), 37);
+    assert_eq!(*store_c.unwrap().borrow(), 37);
 }
 
 #[test]
 fn second_2prim_2link_2prim_link_prim() {
     let eg = lunk::EventGraph::new();
-    let (a, _b, _c, _d, _link_ac, _link_bd, e, _link_cde) = eg.event(|pc| {
+    let mut store_a = None;
+    let mut store_e = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
         let c = lunk::Prim::new(pc, 0i32);
         let d = lunk::Prim::new(pc, 0i32);
         let e = lunk::Prim::new(pc, 0i32);
         let link_ac = lunk::link!((pc = pc), (a = a.clone()), (c = c.clone()), () {
-            c.set(pc, a.get() + 5);
+            c.set(pc, *a.borrow() + 5);
         });
         let link_bd = lunk::link!((pc = pc), (b = b.clone()), (d = d.clone()), () {
-            d.set(pc, b.get() + 6);
+            d.set(pc, *b.borrow() + 6);
         });
         let link_cde = lunk::link!((pc = pc), (c = c.clone(), d = d.clone()), (e = e.clone()), () {
-            e.set(pc, c.get() + d.get() * 2 + 10);
+            e.set(pc, *c.borrow() + *d.borrow() * 2 + 10);
         });
-        return (a, b, c, d, link_ac, link_bd, e, link_cde);
+        store_a = Some(a);
+        store_e = Some(e);
+        store_other = Some((b, c, d, link_ac, link_bd, link_cde));
     });
     eg.event(|pc| {
-        a.set(pc, 17);
+        store_a.unwrap().set(pc, 17);
     });
-    assert_eq!(e.get(), 44);
+    assert_eq!(*store_e.unwrap().borrow(), 44);
 }
 
 #[test]
 fn second_2prim_2link_2prim_link_prim_trigger_both() {
     let eg = lunk::EventGraph::new();
-    let (a, b, _c, _d, _link_ac, _link_bd, e, _link_cde) = eg.event(|pc| {
+    let mut store_a = None;
+    let mut store_b = None;
+    let mut store_e = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
         let c = lunk::Prim::new(pc, 0i32);
         let d = lunk::Prim::new(pc, 0i32);
         let e = lunk::Prim::new(pc, 0i32);
         let link_ac = lunk::link!((pc = pc), (a = a.clone()), (c = c.clone()), () {
-            c.set(pc, a.get() + 5);
+            c.set(pc, *a.borrow() + 5);
         });
         let link_bd = lunk::link!((pc = pc), (b = b.clone()), (d = d.clone()), () {
-            d.set(pc, b.get() + 6);
+            d.set(pc, *b.borrow() + 6);
         });
         let link_cde = lunk::link!((pc = pc), (c = c.clone(), d = d.clone()), (e = e.clone()), () {
-            e.set(pc, c.get() + d.get() * 2 + 10);
+            e.set(pc, *c.borrow() + *d.borrow() * 2 + 10);
         });
-        return (a, b, c, d, link_ac, link_bd, e, link_cde);
+        store_a = Some(a);
+        store_b = Some(b);
+        store_e = Some(e);
+        store_other = Some((c, d, link_ac, link_bd, link_cde));
     });
     eg.event(|pc| {
-        a.set(pc, 17);
-        b.set(pc, 1);
+        store_a.unwrap().set(pc, 17);
+        store_b.unwrap().set(pc, 1);
     });
-    assert_eq!(e.get(), 46);
+    assert_eq!(*store_e.unwrap().borrow(), 46);
 }
 
 #[test]
 fn second_prim_link_prim_newlink_newprim() {
     let eg = lunk::EventGraph::new();
-    let (_a, b, _link_ab) = eg.event(|pc| {
+    let mut store_b = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
         let link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
-            b.set(pc, a.get() + 5);
+            b.set(pc, *a.borrow() + 5);
         });
-        return (a, b, link);
+        store_b = Some(b);
+        store_other = Some((a, link));
     });
-    let (c, _link_bc) = eg.event(|pc| {
+    let mut store_c = None;
+    let mut store_other2 = None;
+    eg.event(|pc| {
         let c = lunk::Prim::new(pc, 0i32);
-        let link = lunk::link!((pc = pc), (b = b.clone()), (c = c.clone()), () {
-            c.set(pc, b.get() + 11);
+        let link = lunk::link!((pc = pc), (b = store_b.unwrap().clone()), (c = c.clone()), () {
+            c.set(pc, *b.borrow() + 11);
         });
-        return (c, link);
+        store_c = Some(c);
+        store_other2 = Some(link);
     });
-    assert_eq!(c.get(), 16);
+    assert_eq!(*store_c.unwrap().borrow(), 16);
 }
 
 #[test]
 fn second_prim_set_prim_newlink_newprim() {
     let eg = lunk::EventGraph::new();
-    let (a, b, _link_ab) = eg.event(|pc| {
+    let mut store_a = None;
+    let mut store_b = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
         let _link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
-            b.set(pc, a.get() + 5);
+            b.set(pc, *a.borrow() + 5);
         });
-        return (a, b, _link);
+        store_a = Some(a);
+        store_b = Some(b);
+        store_other = Some(_link);
     });
-    let (c, _link_bc) = eg.event(|pc| {
+    let mut store_c = None;
+    let mut store_other2 = None;
+    eg.event(|pc| {
         let c = lunk::Prim::new(pc, 0i32);
-        let link = lunk::link!((pc = pc), (b = b.clone()), (c = c.clone()), () {
-            c.set(pc, b.get() + 11);
+        let link = lunk::link!((pc = pc), (b = store_b.unwrap().clone()), (c = c.clone()), () {
+            c.set(pc, *b.borrow() + 11);
         });
-        a.set(pc, 7);
-        return (c, link);
+        store_a.unwrap().set(pc, 7);
+        store_c = Some(c);
+        store_other2 = Some(link);
     });
-    assert_eq!(c.get(), 23);
+    assert_eq!(*store_c.unwrap().borrow(), 23);
 }
 
 #[test]
 fn second_prim_link_prim_processing_newlink_newprim() {
     let eg = lunk::EventGraph::new();
-    let c_store = Rc::new(RefCell::new(None));
-    let (_a, _b, _link_ab) = eg.event(|pc| {
+    let store_c = Rc::new(RefCell::new(None));
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::Prim::new(pc, 0i32);
         let b = lunk::Prim::new(pc, 0i32);
-        let link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), (c_store = c_store.clone()) {
-            b.set(pc, a.get() + 5);
+        let link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), (c_store = store_c.clone()) {
+            b.set(pc, *a.borrow() + 5);
             let c = lunk::Prim::new(pc, 0i32);
             *c_store.borrow_mut() = Some((c.clone(), link!((pc = pc), (b = b.clone()), (c = c.clone()), () {
-                c.set(pc, b.get() + 12);
+                c.set(pc, *b.borrow() + 12);
             })));
         });
-        return (a, b, link);
+        store_other = Some((a, b, link));
     });
-    assert_eq!(c_store.borrow().as_ref().unwrap().0.get(), 17);
+    assert_eq!(*store_c.borrow().as_ref().unwrap().0.borrow(), 17);
 }
 
 #[test]
 fn basic_list_init() {
     let eg = lunk::EventGraph::new();
-    let (a, _link) = eg.event(|pc: &mut lunk::ProcessingContext<'_>| {
+    let mut store_a = None;
+    let mut store_other = None;
+    eg.event(|pc: &mut lunk::ProcessingContext<'_>| {
         let z = lunk::Prim::new(pc, 0);
         let a = lunk::List::new(pc, Vec::<i32>::new());
         let _link = lunk::link!((pc = pc), (z = z.clone()), (a = a.clone()), () {
@@ -245,15 +304,18 @@ fn basic_list_init() {
                 a.push(pc, 14);
             }
         });
-        return (a, _link);
+        store_a = Some(a);
+        store_other = Some((z, _link));
     });
-    assert_eq!(a.borrow_values().clone(), vec![14, 14, 14]);
+    assert_eq!(store_a.unwrap().borrow_values().clone(), vec![14, 14, 14]);
 }
 
 #[test]
 fn basic_list() {
     let eg = lunk::EventGraph::new();
-    let (_a, b, _link) = eg.event(|pc: &mut lunk::ProcessingContext<'_>| {
+    let mut store_b = None;
+    let mut store_other = None;
+    eg.event(|pc: &mut lunk::ProcessingContext<'_>| {
         let a = lunk::List::new(pc, vec![]);
         let b = lunk::List::new(pc, vec![]);
         let _link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
@@ -262,15 +324,19 @@ fn basic_list() {
             }
         });
         a.splice(pc, 0, 0, vec![46]);
-        return (a, b, _link);
+        store_b = Some(b);
+        store_other = Some((a, _link));
     });
-    assert_eq!(b.borrow_values()[0], 51);
+    assert_eq!(store_b.unwrap().borrow_values()[0], 51);
 }
 
 #[test]
 fn basic_list2x() {
-    let ec = lunk::EventGraph::new();
-    let (a, b, _link) = ec.event(|pc| {
+    let eg = lunk::EventGraph::new();
+    let mut store_a = None;
+    let mut store_b = None;
+    let mut store_other = None;
+    eg.event(|pc| {
         let a = lunk::List::new(pc, vec![]);
         let b = lunk::List::new(pc, vec![]);
         let _link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
@@ -279,11 +345,13 @@ fn basic_list2x() {
             }
         });
         a.splice(pc, 0, 0, vec![46]);
-        return (a, b, _link);
+        store_a = Some(a);
+        store_b = Some(b);
+        store_other = Some(_link);
     });
-    assert_eq!(b.borrow_values()[0], 51);
-    ec.event(|pc| {
-        a.splice(pc, 0, 1, vec![12]);
+    assert_eq!(store_b.as_ref().unwrap().borrow_values()[0], 51);
+    eg.event(|pc| {
+        store_a.unwrap().splice(pc, 0, 1, vec![12]);
     });
-    assert_eq!(b.borrow_values()[0], 17);
+    assert_eq!(store_b.unwrap().borrow_values()[0], 17);
 }
