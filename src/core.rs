@@ -126,8 +126,13 @@ impl EventGraph {
     /// should call this whenever an event happens (user input, remote notification,
     /// etc) as well as during initial setup, and do all graph manipulation from within
     /// the callback.
+    ///
+    /// If this is called re-entrantly, the latter invocation will be ignored (the
+    /// callback) won't be run.
     pub fn event(&self, f: impl FnOnce(&mut ProcessingContext)) {
-        let mut s = self.0.borrow_mut();
+        let Ok(mut s) = self.0.try_borrow_mut() else {
+            return;
+        };
         if s.processing {
             return;
         }
