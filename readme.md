@@ -1,10 +1,8 @@
-Lunk is an event graph processing library.
-
-The expected use case is user interfaces, where user events (clicks, typing) can set off cascades of other changes and computation. Specifically, WASM/web user interfaces (since it's single threaded) but this could also reasonably be used with other single-threaded UI libraries like Gtk.
+Lunk is an event graph processing library, typically for chaining callbacks in user interfaces (think Rx/Reactive or Observable). I mostly use it with WASM, but I've used it with Gtk too.
 
 Most web UI frameworks include their own event graph processing tools: Sycamore has signals, Dioxus and others have similar. This is a standalone tool, for use without a framework (i.e. with Gloo and other a la carte tools).
 
-Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance (although it appears to be pretty fast anyway).
+Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance (although it appears to be decently fast anyway).
 
 - You can represent a full graph
 
@@ -40,14 +38,18 @@ An example:
 fn main() {
     let eg = lunk::EventGraph::new();
     let (_input_a, _input_b, output, _link) = eg.event(|pc| {
-        let input_a = lunk::Prim::new(pc, 0i32);
-        let input_b = lunk::Prim::new(pc, 1f32);
-        let output = lunk::Prim::new(pc, 0f32);
+        let input_a = lunk::Prim::new(0i32);
+        let input_b = lunk::Prim::new(1f32);
+        let output = lunk::Prim::new(0f32);
         let _link =
             lunk::link!(
-                (ctx = pc),
+                // Context
+                (pc = pc),
+                // Input values (primitives, lists)
                 (input_a = input_a.clone(), input_b = input_b.clone()),
+                // Output values (primitves, lists)
                 (output = output.clone()),
+                // Additional non-graph captures
                 () {
                     output.set(ctx, input_a.get() as f32 * input_b.get() + 5.);
                 }
@@ -197,7 +199,7 @@ However, when the user types into the textbox this is executed:
 
 Per the above, you can see Lunk already implicitly prevents the infinite loop by linearizing the graph before execution.
 
-However, it'll still try to change the value twice - if there were other more intensive or less stable work there it would be run again too.
+However, it'll still try to change the textbox value - for other inputs this could mess with the cursor position or worse.
 
 #### Better implementation
 
@@ -207,9 +209,9 @@ You can avoiding unnecessary work by doing this instead:
 
 - `Prim`, `textbox_value`
 
-- `link!` (`l1`) from `my_value` to `textbox_value` that does `textbox_raw_value.set(pc, textbox_value.borrow().clone())` and sets the textbox element text
+- `link!` (`l1`) from `my_value` to `textbox_value` that does `textbox_value.set(pc, my_value.borrow().clone())` and sets the textbox element text
 
-- `link!` (`l2`) from `textbox_value` to `my_value` that does `textbox_value.set(pc, textbox_raw_value.borrow().clone())`
+- `link!` (`l2`) from `textbox_value` to `my_value` that does `my_value.set(pc, textbox_value.borrow().clone())`
 
 - An event handler on the textbox that does `ev.event(|pc| textbox_value.set(pc, el.value()))`
 
@@ -217,15 +219,15 @@ You can avoiding unnecessary work by doing this instead:
 
 When the user types into the textbox, this will now happen:
 
-1. The textbox change event handler executes `eg.event` and does `textbox_value.set`
+1. The textbox change event handler executes `eg.event` and does `textbox_value.set` which marks `l2` as a processing root
 
-2. `eg.event` walks `l2`. Then it walks `l1` and sees that the next link after `l1` is `l2` which was an ancestor on this path - so it must be a cycle. `l1` is skipped entirely, and `l2` is identified as "leaf".
+2. `eg.event` walks `l2`. Then it walks `l1` and sees that the next link after `l1` is `l2` which was an ancestor on this path - so it must be a cycle. `l1` is skipped entirely, and `l2` is identified as a "leaf".
 
-3. `l2` executes and modifies the textbox element text
+3. `eg.event` starts doing dependency-first traversal starting at `l2`. Since there's no dependencies, it executes `l2` and the callback sets `my_value`.
 
-4. The textbox change event handler executes again, and does `textbox_value.set`
+4. Reached end of graph, `eg.event` ends
 
-5. Reached end of graph, `eg.event` ends
+No extra value modifications or element changes were made!
 
 ## Troubleshooting
 
@@ -265,24 +267,13 @@ When the user types into the textbox, this will now happen:
 
   - The callback captures the item that owns it. For example, you did `link!` and captured an html element that the `link!` modifies, then store the `link!` handle in the html element itself. You should capture the html element by weak reference instead.
 
-# Why flexibility over performance
-
-The main gains from these libraries come from helping you avoid costly work. The more flexible, the more work it'll help you avoid.
-
-For work it doesn't avoid, it's still fast: it's written in Rust, the time spent doing graph processing is miniscule compared to FFI calls, styling, layout, rendering in a web environment.
-
-Despite performance not being a focus, it's actually very fast! I tried integrating it into <https://github.com/krausest/js-framework-benchmark> and got good performance: 746ms vs 796ms for Sycamore (!)
-
-(I don't quite believe this is faster than Sycamore:)
-
-- There may be some randomness in the benchmark, it's a browser after all
-- Some of the difference may be due to non-event-graph things, like element creation (direct `rooting` manipulation vs Sycamore's JSX-like system)
-
 # Design decisions
 
 ## Separate links and data values
 
-You typically pass around data so other systems can attach their own listeners. If a value is an output of a graph computation, it needs to include references to all the inputs the computation needs, which in general means you need a new type for each computation. By keeping the data separate from the link, the data types can be simple while the complexity is kept in the links.
+Some event graph implementations attach the callbacks directly to data values and connect data values directly, with no heterogenous "link" object.
+
+In Lunk, by separating the value and link, the data types can be simple while the complexity is kept in the links. I think this makes ownership and lifetimes simpler - for instance, you won't accidentally keep listeners around just by storing a value.
 
 This also supports many configurations with only a few functions/macros: value that's manually triggered not computed, a value that's computed from other values, and a computation that doesn't output a value.
 
@@ -296,6 +287,6 @@ I could have used template magic to infer the type, but this would have made man
 
 In true a la carte philosophy, I figured some people might not want animations and it wasn't hard to make entirely separate.
 
-I think bundling the animator with the processing context shouldn't be too hard.
+If you use this, I think bundling the animator with the processing context shouldn't be too hard.
 
-In case there are other similar extensions, having a solution that allows external extension is important (maybe this won't happen though, then I may go ahead and integrate it).
+In case someone wants implements similar functionality as a 3rd party, the 1st party implementation only uses public interfaces so users should be able to freely choose a better solution.
