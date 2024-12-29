@@ -192,8 +192,8 @@ fn basic0() {
     let mut store_b = None;
     let mut store_link = None;
     eg.event(|pc| {
-        let a = Prim::new(pc, 0);
-        let b = Prim::new(pc, 0);
+        let a = Prim::new(0);
+        let b = Prim::new(0);
 
         struct LinkAB {
             a: WeakPrim<i32>,

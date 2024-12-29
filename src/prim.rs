@@ -36,15 +36,10 @@ impl<T: 'static> PrimMut_<T> {
 }
 
 pub(crate) struct Prim_<T> {
-    pub(crate) id: Id,
     mut_: RefCell<PrimMut_<T>>,
 }
 
 impl<T> ValueTrait for Prim_<T> {
-    fn id(&self) -> Id {
-        return self.id;
-    }
-
     fn next(&self) -> Vec<crate::Link> {
         let mut out = vec![];
         let mut self2 = self.mut_.borrow_mut();
@@ -78,20 +73,12 @@ pub struct Prim<T>(pub(crate) Rc<Prim_<T>>);
 pub struct WeakPrim<T>(Weak<Prim_<T>>);
 
 impl<T: 'static> Prim<T> {
-    pub fn new(pc: &mut ProcessingContext, initial: T) -> Self {
-        let id = pc.1.take_id();
-        return Prim(Rc::new(Prim_ {
-            id: id,
-            mut_: RefCell::new(PrimMut_ {
-                value: initial,
-                first_change: true,
-                next: vec![],
-            }),
-        }));
-    }
-
-    pub fn id(&self) -> Id {
-        return self.0.id;
+    pub fn new(initial: T) -> Self {
+        return Prim(Rc::new(Prim_ { mut_: RefCell::new(PrimMut_ {
+            value: initial,
+            first_change: true,
+            next: vec![],
+        }) }));
     }
 
     /// Used internally by the `link!` macro to establish graph edges between an input
@@ -118,7 +105,7 @@ impl<T: 'static> Prim<T> {
             pc.1.cleanup.push(self.0.clone());
             if !pc.1.processing {
                 for l in self.0.next() {
-                    pc.1.roots.insert(l.0.id, l.clone());
+                    pc.1.step1_stacked_links.push((true, l));
                 }
             }
         }
@@ -139,10 +126,6 @@ impl<T: 'static> IntoValue for Prim<T> {
 impl<T: 'static> WeakPrim<T> {
     pub fn upgrade(&self) -> Option<Prim<T>> {
         return Some(Prim(self.0.upgrade()?));
-    }
-
-    pub fn id(&self) -> Id {
-        return self.upgrade().unwrap().id();
     }
 }
 
@@ -174,10 +157,6 @@ pub(crate) struct HistPrim_<T: PartialEq + Clone> {
 }
 
 impl<T: PartialEq + Clone> ValueTrait for HistPrim_<T> {
-    fn id(&self) -> Id {
-        return self.id;
-    }
-
     fn next(&self) -> Vec<crate::Link> {
         let mut out = vec![];
         let mut self2 = self.mut_.borrow_mut();
@@ -226,10 +205,6 @@ impl<T: PartialEq + Clone + 'static> HistPrim<T> {
         }));
     }
 
-    pub fn id(&self) -> Id {
-        return self.0.id;
-    }
-
     /// Used internally by the `link!` macro to establish graph edges between an input
     /// value and the link.
     pub fn add_next(&self, link: &Link) {
@@ -257,7 +232,7 @@ impl<T: PartialEq + Clone + 'static> HistPrim<T> {
             pc.1.cleanup.push(self.0.clone());
             if !pc.1.processing {
                 for l in self.0.next() {
-                    pc.1.roots.insert(l.0.id, l.clone());
+                    pc.1.step1_stacked_links.push((true, l));
                 }
             }
         }
@@ -289,10 +264,6 @@ impl<T: PartialEq + Clone + 'static> IntoValue for HistPrim<T> {
 impl<T: PartialEq + Clone + 'static> WeakHistPrim<T> {
     pub fn upgrade(&self) -> Option<HistPrim<T>> {
         return Some(HistPrim(self.0.upgrade()?));
-    }
-
-    pub fn id(&self) -> Id {
-        return self.upgrade().unwrap().id();
     }
 }
 

@@ -17,7 +17,6 @@ pub type Id = usize;
 pub const NULL_ID: Id = 0;
 
 pub trait ValueTrait {
-    fn id(&self) -> Id;
     fn next(&self) -> Vec<Link>;
 }
 
@@ -51,6 +50,20 @@ pub(crate) struct Link_ {
 #[derive(Clone)]
 pub struct Link(pub(crate) Rc<Link_>);
 
+impl std::hash::Hash for Link {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.id.hash(state);
+    }
+}
+
+impl PartialEq for Link {
+    fn eq(&self, other: &Self) -> bool {
+        return self.0.id == other.0.id;
+    }
+}
+
+impl Eq for Link { }
+
 impl Link {
     /// Create a link with the given `LinkCb`.  The new link will immediately be
     /// scheduled to be run once, when the current `EventContext` event function
@@ -67,21 +80,13 @@ impl Link {
             id: id,
             inner: Box::new(inner),
         }));
-        pc.1.stg1_queued_links.push(out.clone());
+        pc.1.step1_stacked_links.push((true, out.clone()));
         return out;
     }
 }
 
 pub struct _Context {
-    pub(crate) roots: HashMap<Id, Link>,
-    pub(crate) stg1_queued_links: Vec<Link>,
-    pub(crate) affected_links: HashSet<Id>,
-    pub(crate) stg2_leaves: Vec<Link>,
-    pub(crate) stg2_up: HashMap<Id, Vec<Link>>,
-    pub(crate) stg2_queued_links: Vec<(bool, Link)>,
-    pub(crate) stg2_seen_links: HashSet<Id>,
-    pub(crate) stg2_seen_up: HashSet<Id>,
-    pub(crate) stg2_buf_delay: Vec<Link>,
+    pub(crate) step1_stacked_links: Vec<(bool, Link)>,
     pub(crate) cleanup: Vec<Rc<dyn Cleanup>>,
     pub(crate) processing: bool,
     ids: usize,
@@ -107,15 +112,7 @@ pub struct ProcessingContext<'a>(pub(crate) &'a EventGraph, pub(crate) &'a mut _
 impl EventGraph {
     pub fn new() -> EventGraph {
         return EventGraph(Rc::new(RefCell::new(_Context {
-            roots: Default::default(),
-            stg1_queued_links: Default::default(),
-            affected_links: Default::default(),
-            stg2_leaves: Default::default(),
-            stg2_up: Default::default(),
-            stg2_queued_links: Default::default(),
-            stg2_seen_links: Default::default(),
-            stg2_seen_up: Default::default(),
-            stg2_buf_delay: Default::default(),
+            step1_stacked_links: Default::default(),
             cleanup: vec![],
             processing: false,
             ids: 1,
@@ -140,81 +137,118 @@ impl EventGraph {
         // Do initial changes (modifying values, modifying graph)
         let out = f(&mut ProcessingContext(self, &mut *s));
         s.processing = true;
-        let queue_roots: Vec<Link> = s.roots.values().cloned().collect();
-        s.stg1_queued_links.extend(queue_roots);
 
         // Process graph (repeatedly, for new subgraph updates during processing)
-        while !s.stg1_queued_links.is_empty() {
-            // Walk graph once, starting from (links downstream from) modified values and new
-            // links, to:
+        let mut involved_links = HashSet::new();
+        let mut processed_links = HashSet::new();
+        let mut step12_leaves = vec![];
+        let mut step2_upstream_dep_tree: HashMap<Id, HashSet<Link>> = HashMap::new();
+        let mut step2_stacked_links = vec![];
+        let mut step2_seen_up = HashSet::new();
+        while !s.step1_stacked_links.is_empty() {
+            // Step 1, walk graph once starting from (links downstream from) modified values
+            // and new links in order to:
             //
-            // * Identify affected links for next pass
+            // * Identify upstream leaves - which become roots for 2nd step reverse traversal
             //
-            // * Identify leaves to start next pass
+            // * Build upstream dep tree for 2nd step traversal
             //
-            // * Build deps tree from reverse deps
-            while let Some(link) = s.stg1_queued_links.pop() {
-                if !s.affected_links.insert(link.0.id) {
-                    continue;
-                }
-                let mut has_next = false;
-                for next_val in link.0.inner.next() {
-                    for next_link in next_val.0.next() {
-                        has_next = true;
-                        s.stg1_queued_links.push(next_link.clone());
-                        s.stg2_up.entry(next_link.0.id).or_insert_with(Vec::new).push(link.clone());
+            // * Identify involved links in affected subgraph to limit 2nd step
+            struct Step1PathEntry {
+                link: Link,
+                downstream: usize,
+            }
+
+            let mut path_stack: Vec<Step1PathEntry> = vec![];
+            s.step1_stacked_links.reverse();
+            while let Some((first, link)) = s.step1_stacked_links.pop() {
+                if first {
+                    // Merging paths, don't reprocess
+                    if !involved_links.insert(link.0.id) {
+                        continue;
                     }
-                }
-                if !has_next {
-                    s.stg2_leaves.push(link);
+
+                    // Classify by being a cycle link or not
+                    let mut has_outputs = false;
+                    let mut noncycle_outputs = vec![];
+                    for next_val in link.0.inner.next() {
+                        'links: for next_link in next_val.0.next() {
+                            has_outputs = true;
+
+                            // Check if next link makes a cycle and skip
+                            for path_entry in &path_stack {
+                                if path_entry.link.0.id == next_link.0.id {
+                                    continue 'links;
+                                }
+                            }
+
+                            // Not a cycle
+                            noncycle_outputs.push(next_link.clone());
+                        }
+                    }
+
+                    // Act by classification
+                    if has_outputs && noncycle_outputs.is_empty() {
+                        // This is a cycle link (primary purpose is to feed back into already processed
+                        // value) - skip it
+                    } else {
+                        // This is a non-cycle link, involve in graph as normal
+                        if let Some(parent) = path_stack.last_mut() {
+                            // Add as upstream dep from parent Update parent stats
+                            parent.downstream += 1;
+                        }
+
+                        // Stack 2nd pass
+                        s.step1_stacked_links.push((false, link.clone()));
+
+                        // Stack parent info
+                        path_stack.push(Step1PathEntry {
+                            link: link.clone(),
+                            downstream: 0,
+                        });
+
+                        // Stack children and establish child dependencies
+                        for next_link in noncycle_outputs {
+                            step2_upstream_dep_tree.entry(next_link.0.id).or_default().insert(link.clone());
+                            s.step1_stacked_links.push((true, next_link));
+                        }
+                    }
+                } else {
+                    // Unwind - use post-processing stats to determine if leaf (by real downstream)
+                    let totals = path_stack.pop().unwrap();
+                    if totals.downstream == 0 {
+                        step12_leaves.push(link);
+                    }
                 }
             }
 
             // Walk deps from leaves, only considering affected nodes
-            let queue_leaves: Vec<(bool, Link)> = s.stg2_leaves.drain(0..).map(|l| (true, l)).collect();
-            s.stg2_queued_links.extend(queue_leaves);
-            while let Some((first, link)) = s.stg2_queued_links.pop() {
+            let queue_leaves: Vec<(bool, Link)> = step12_leaves.drain(0..).map(|l| (true, l)).collect();
+            step2_stacked_links.extend(queue_leaves);
+            while let Some((first, link)) = step2_stacked_links.pop() {
                 if first {
-                    if !s.stg2_seen_links.insert(link.0.id) {
+                    if !processed_links.insert(link.0.id) {
                         continue;
                     }
-                    s.stg2_queued_links.push((false, link.clone()));
-                    for prev_link in s.stg2_up.remove(&link.0.id).unwrap_or(vec![]) {
-                        if !s.stg2_seen_up.insert(prev_link.0.id) {
+                    step2_stacked_links.push((false, link.clone()));
+                    for prev_link in step2_upstream_dep_tree.remove(&link.0.id).unwrap_or_default() {
+                        if !step2_seen_up.insert(prev_link.0.id) {
                             continue;
                         }
-                        if !s.affected_links.contains(&prev_link.0.id) {
+                        if !involved_links.contains(&prev_link.0.id) {
                             continue;
                         }
-                        if s.roots.contains_key(&prev_link.0.id) {
-                            // Roots (modified nodes) pushed to the queue last so they're processed first,
-                            // breaking cycles
-                            s.stg2_buf_delay.push(prev_link);
-                        } else {
-                            s.stg2_queued_links.push((true, prev_link));
-                        }
+                        step2_stacked_links.push((true, prev_link));
                     }
-                    while let Some(prev_link) = s.stg2_buf_delay.pop() {
-                        s.stg2_queued_links.push((true, prev_link));
-                    }
-                    s.stg2_seen_up.clear();
+                    step2_seen_up.clear();
                 } else {
                     (link.0.inner).call(&mut ProcessingContext(self, &mut s));
                 }
             }
-            s.stg2_seen_links.clear();
         }
-        s.affected_links.clear();
-        s.roots.clear();
-        debug_assert!(s.stg1_queued_links.is_empty());
-        debug_assert!(s.stg2_leaves.is_empty());
-        debug_assert!(s.stg2_up.is_empty());
-        debug_assert!(s.stg2_queued_links.is_empty());
-        debug_assert!(s.stg2_seen_links.is_empty());
-        debug_assert!(s.stg2_seen_up.is_empty());
-        debug_assert!(s.stg2_buf_delay.is_empty());
 
         // Cleanup
+        debug_assert!(step2_seen_up.is_empty());
         for p in s.cleanup.drain(0..) {
             p.clean();
         }

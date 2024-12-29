@@ -1,8 +1,9 @@
 use std::{
-    rc::Rc,
     cell::{
+        Cell,
         RefCell,
     },
+    rc::Rc,
 };
 use lunk::link;
 
@@ -13,8 +14,8 @@ fn init_prim_link_prim() {
     let mut store_output = None;
     let mut store_link = None;
     eg.event(|pc| {
-        let input = lunk::Prim::new(pc, 0i32);
-        let output = lunk::Prim::new(pc, 0f32);
+        let input = lunk::Prim::new(0i32);
+        let output = lunk::Prim::new(0f32);
         let _link = lunk::link!((pc = pc), (input = input.clone()), (output = output.clone()), () {
             output.set(pc, *input.borrow() as f32 + 5.);
         });
@@ -32,8 +33,8 @@ fn second_prim_link_prim() {
     let mut store_output = None;
     let mut store_link = None;
     eg.event(|pc| {
-        let input = lunk::Prim::new(pc, 0i32);
-        let output = lunk::Prim::new(pc, 0f32);
+        let input = lunk::Prim::new(0i32);
+        let output = lunk::Prim::new(0f32);
         let link = lunk::link!((pc = pc), (input = input.clone()), (output = output.clone()), () {
             output.set(pc, *input.borrow() as f32 + 5.);
         });
@@ -54,8 +55,8 @@ fn second_prim_link_prim_set_twice() {
     let mut store_output = None;
     let mut store_link = None;
     eg.event(|pc| {
-        let input = lunk::Prim::new(pc, 0i32);
-        let output = lunk::Prim::new(pc, 0f32);
+        let input = lunk::Prim::new(0i32);
+        let output = lunk::Prim::new(0f32);
         let link = lunk::link!((pc = pc), (input = input.clone()), (output = output.clone()), () {
             output.set(pc, *input.borrow() as f32 + 5.);
         });
@@ -80,9 +81,9 @@ fn second_prim_link_prim_link_prim() {
     let mut store_c = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
-        let c = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
+        let c = lunk::Prim::new(0i32);
         let link_ab = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
             b.set(pc, *a.borrow() + 5);
         });
@@ -106,9 +107,9 @@ fn second_prim_link_prim_link_prim_skiplevel() {
     let mut store_c = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
-        let c = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
+        let c = lunk::Prim::new(0i32);
         let link_ab = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
             b.set(pc, *a.borrow() + 5);
         });
@@ -132,9 +133,9 @@ fn second_2prim_link_prim() {
     let mut store_c = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
-        let c = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
+        let c = lunk::Prim::new(0i32);
         let link = lunk::link!((pc = pc), (a = a.clone(), b = b.clone()), (c = c.clone()), () {
             c.set(pc, *a.borrow() + *b.borrow() * 2 + 3);
         });
@@ -155,11 +156,11 @@ fn second_2prim_2link_2prim_link_prim() {
     let mut store_e = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
-        let c = lunk::Prim::new(pc, 0i32);
-        let d = lunk::Prim::new(pc, 0i32);
-        let e = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
+        let c = lunk::Prim::new(0i32);
+        let d = lunk::Prim::new(0i32);
+        let e = lunk::Prim::new(0i32);
         let link_ac = lunk::link!((pc = pc), (a = a.clone()), (c = c.clone()), () {
             c.set(pc, *a.borrow() + 5);
         });
@@ -187,11 +188,11 @@ fn second_2prim_2link_2prim_link_prim_trigger_both() {
     let mut store_e = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
-        let c = lunk::Prim::new(pc, 0i32);
-        let d = lunk::Prim::new(pc, 0i32);
-        let e = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
+        let c = lunk::Prim::new(0i32);
+        let d = lunk::Prim::new(0i32);
+        let e = lunk::Prim::new(0i32);
         let link_ac = lunk::link!((pc = pc), (a = a.clone()), (c = c.clone()), () {
             c.set(pc, *a.borrow() + 5);
         });
@@ -219,8 +220,8 @@ fn second_prim_link_prim_newlink_newprim() {
     let mut store_b = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
         let link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
             b.set(pc, *a.borrow() + 5);
         });
@@ -230,7 +231,7 @@ fn second_prim_link_prim_newlink_newprim() {
     let mut store_c = None;
     let mut store_other2 = None;
     eg.event(|pc| {
-        let c = lunk::Prim::new(pc, 0i32);
+        let c = lunk::Prim::new(0i32);
         let link = lunk::link!((pc = pc), (b = store_b.unwrap().clone()), (c = c.clone()), () {
             c.set(pc, *b.borrow() + 11);
         });
@@ -247,8 +248,8 @@ fn second_prim_set_prim_newlink_newprim() {
     let mut store_b = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
         let _link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
             b.set(pc, *a.borrow() + 5);
         });
@@ -259,7 +260,7 @@ fn second_prim_set_prim_newlink_newprim() {
     let mut store_c = None;
     let mut store_other2 = None;
     eg.event(|pc| {
-        let c = lunk::Prim::new(pc, 0i32);
+        let c = lunk::Prim::new(0i32);
         let link = lunk::link!((pc = pc), (b = store_b.unwrap().clone()), (c = c.clone()), () {
             c.set(pc, *b.borrow() + 11);
         });
@@ -276,11 +277,11 @@ fn second_prim_link_prim_processing_newlink_newprim() {
     let store_c = Rc::new(RefCell::new(None));
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::Prim::new(pc, 0i32);
-        let b = lunk::Prim::new(pc, 0i32);
+        let a = lunk::Prim::new(0i32);
+        let b = lunk::Prim::new(0i32);
         let link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), (c_store = store_c.clone()) {
             b.set(pc, *a.borrow() + 5);
-            let c = lunk::Prim::new(pc, 0i32);
+            let c = lunk::Prim::new(0i32);
             *c_store.borrow_mut() = Some((c.clone(), link!((pc = pc), (b = b.clone()), (c = c.clone()), () {
                 c.set(pc, *b.borrow() + 12);
             })));
@@ -296,8 +297,8 @@ fn basic_list_init() {
     let mut store_a = None;
     let mut store_other = None;
     eg.event(|pc: &mut lunk::ProcessingContext<'_>| {
-        let z = lunk::Prim::new(pc, 0);
-        let a = lunk::List::new(pc, Vec::<i32>::new());
+        let z = lunk::Prim::new(0);
+        let a = lunk::List::new(Vec::<i32>::new());
         let _link = lunk::link!((pc = pc), (z = z.clone()), (a = a.clone()), () {
             _ = z;
             while a.borrow_values().len() < 3 {
@@ -316,8 +317,8 @@ fn basic_list() {
     let mut store_b = None;
     let mut store_other = None;
     eg.event(|pc: &mut lunk::ProcessingContext<'_>| {
-        let a = lunk::List::new(pc, vec![]);
-        let b = lunk::List::new(pc, vec![]);
+        let a = lunk::List::new(vec![]);
+        let b = lunk::List::new(vec![]);
         let _link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
             for change in a.borrow_changes().iter() {
                 b.splice(pc, change.offset, change.remove, change.add.iter().map(|x| x + 5).collect());
@@ -337,8 +338,8 @@ fn basic_list2x() {
     let mut store_b = None;
     let mut store_other = None;
     eg.event(|pc| {
-        let a = lunk::List::new(pc, vec![]);
-        let b = lunk::List::new(pc, vec![]);
+        let a = lunk::List::new(vec![]);
+        let b = lunk::List::new(vec![]);
         let _link = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), () {
             for change in a.borrow_changes().iter() {
                 b.splice(pc, change.offset, change.remove, change.add.iter().map(|x| x + 5).collect());
@@ -354,4 +355,51 @@ fn basic_list2x() {
         store_a.unwrap().splice(pc, 0, 1, vec![12]);
     });
     assert_eq!(store_b.unwrap().borrow_values()[0], 17);
+}
+
+#[test]
+fn cycle() {
+    let eg = lunk::EventGraph::new();
+    let l1_fired = Rc::new(Cell::new(false));
+    let l2_fired = Rc::new(Cell::new(false));
+    let mut store_a = None;
+    let mut store_b = None;
+    let mut store_other = None;
+    eprintln!("initial");
+    eg.event(|pc| {
+        let a = lunk::Prim::new(7);
+        let b = lunk::Prim::new(0);
+        let _l1 = lunk::link!((pc = pc), (a = a.clone()), (b = b.clone()), (l1_fired = l1_fired.clone()) {
+            l1_fired.set(true);
+            b.set(pc, *a.borrow());
+        });
+        let _l2 = lunk::link!((pc = pc), (b = b.clone()), (a = a.clone()), (l2_fired = l2_fired.clone()) {
+            l2_fired.set(true);
+            a.set(pc, *b.borrow());
+        });
+        store_a = Some(a);
+        store_b = Some(b);
+        store_other = Some((_l1, _l2));
+    });
+    assert!(l1_fired.get());
+    assert!(!l2_fired.get());
+    assert_eq!(*store_b.as_ref().unwrap().borrow(), 7);
+    eprintln!("set 1");
+    l1_fired.set(false);
+    l2_fired.set(false);
+    eg.event(|pc| {
+        store_a.as_ref().unwrap().set(pc, 13);
+    });
+    assert!(l1_fired.get());
+    assert!(!l2_fired.get());
+    assert_eq!(*store_b.as_ref().unwrap().borrow(), 13);
+    eprintln!("set 2");
+    l1_fired.set(false);
+    l2_fired.set(false);
+    eg.event(|pc| {
+        store_b.unwrap().set(pc, 27);
+    });
+    assert!(l2_fired.get());
+    assert!(!l1_fired.get());
+    assert_eq!(*store_a.unwrap().borrow(), 27);
 }

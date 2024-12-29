@@ -11,7 +11,6 @@ use std::{
 };
 use crate::{
     core::{
-        Id,
         ValueTrait,
         ProcessingContext,
         Cleanup,
@@ -54,15 +53,10 @@ impl<T: Clone> ListMut_<T> {
 }
 
 struct List_<T: Clone> {
-    id: Id,
     mut_: RefCell<ListMut_<T>>,
 }
 
 impl<T: Clone> ValueTrait for List_<T> {
-    fn id(&self) -> Id {
-        return self.id;
-    }
-
     fn next(&self) -> Vec<crate::Link> {
         return self.mut_.borrow_mut().next();
     }
@@ -82,20 +76,12 @@ pub struct List<T: Clone>(Rc<List_<T>>);
 pub struct WeakList<T: Clone>(Weak<List_<T>>);
 
 impl<T: Clone + 'static> List<T> {
-    pub fn new(pc: &mut ProcessingContext, initial: std::vec::Vec<T>) -> Self {
-        let id = pc.1.take_id();
-        return List(Rc::new(List_ {
-            id: id,
-            mut_: RefCell::new(ListMut_ {
-                value: initial,
-                changes: vec![],
-                next: vec![],
-            }),
-        }));
-    }
-
-    pub fn id(&self) -> Id {
-        return self.0.id;
+    pub fn new(initial: std::vec::Vec<T>) -> Self {
+        return List(Rc::new(List_ { mut_: RefCell::new(ListMut_ {
+            value: initial,
+            changes: vec![],
+            next: vec![],
+        }) }));
     }
 
     /// Used internally by the `link!` macro to establish graph edges between an input
@@ -131,7 +117,7 @@ impl<T: Clone + 'static> List<T> {
             pc.1.cleanup.push(self.0.clone());
             if !pc.1.processing {
                 for l in self2.next() {
-                    pc.1.roots.insert(l.0.id, l.clone());
+                    pc.1.step1_stacked_links.push((true, l));
                 }
             }
         }
@@ -220,10 +206,6 @@ impl<T: Clone + 'static> IntoValue for List<T> {
 impl<T: Clone + 'static> WeakList<T> {
     pub fn upgrade(&self) -> Option<List<T>> {
         return Some(List(self.0.upgrade()?));
-    }
-
-    pub fn id(&self) -> Id {
-        return self.upgrade().unwrap().id();
     }
 }
 

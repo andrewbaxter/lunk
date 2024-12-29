@@ -6,12 +6,17 @@ Most web UI frameworks include their own event graph processing tools: Sycamore 
 
 Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance (although it appears to be pretty fast anyway).
 
-- You can represent a full graph, including cycles
-- Data has simple, lifetime-less types (`Prim<i32>`, `List<i32>`, etc) which makes it simple to pass around and store in structures
+- You can represent a full graph
+
+- Cycles are implicitly broken during execution
+
+- Data has simple, lifetime-less types (`Prim<i32>`, `List<i32>`, etc) which are simple to pass around and store in structures
+
 - Handles graph modifications during graph processing - new nodes will be processed after their dependencies
+
 - Animation/easing property changes
 
-This only handles synchronous graph processing at the moment. Asynchronous events are not handled.
+This only handles synchronous graph processing. Asynchronous events are not handled.
 
 Status: MVP
 
@@ -20,9 +25,14 @@ Status: MVP
 ## Basic usage
 
 1. Create an `EventGraph` `eg`
-2. Call `eg.event(|pc| { })` to do setup.
+
+2. Call `eg.event(|pc| { })` and do setup within it.
+
 3. Within the event context, create values with `lunk::Prim::new()` and `lunk::List::new()`. Create links to process input changes with `lunk::link!()`.
-4. When user input happens, call `eg.event` and modify data values using the associated methods.
+
+4. When external events occur, call `eg.event` and modify data values using the associated methods.
+
+5. At the end of `eg.event` link callbacks will be called for all newly created and downstream links of modified values.
 
 An example:
 
@@ -53,15 +63,17 @@ When `a` is modified, `b` will be updated to have the a's value plus 5.
 
 See `link!` documentation for a detailed explanation. Links can be manually (without macros) defined but there's some boilerplate.
 
-## Ownership
+## Memory management and ownership
 
-Values have weak references to dependent links and no references to the links that write to them. This means that there are no rc-leaking cycles in the graph structure itself.
+Links store strong references to their input and output values, but values store no references. You must keep all links alive for callbacks to happen.
 
-Links must be kept alive for the duration you want them to trigger. If a link is dropped, it will stop activating during events.
+A good way to keep them alive is to store them in the UI elements related to them. When the UI elements are removed the callbacks will no longer fire.
+
+Keeping or accidentally dropping links can cause incorrect behavior - see the troubleshooting section below for suggestions.
 
 ## Animation
 
-To animate primitive values
+Primitive values can be interpolated over multiple steps.
 
 1. Create an `Animator`
 
@@ -85,7 +97,7 @@ To animate primitive values
 
    This step the animation (`delta_s` is seconds since the last update) and returns true if there are still in-progress animations.
 
-Aside from `set_ease`, you can create your own custom animations by implementing `PrimAnimation` and calling `animator.start(MyPrimAnimation{...})`.
+You can also create your own custom animations by implementing `PrimAnimation` and calling `animator.start(MyPrimAnimation{...})` instead of `set_ease`.
 
 ### Idiomatic usage on the web
 
@@ -129,41 +141,129 @@ Basically `request_animation_frame` needs to be called recursively to start the 
 
 To do this I made a shared `Option` for holding the return, which is kept alive inside the callback which is owned by `anim`.
 
+## How the graph algorithm works
+
+When an event occurs (wrapped by `eg.event`) the code modifies some values (primitives, lists). After this initial event handling finishes, the callback graph is executed.
+
+The way this happens is as follows:
+
+1. The dependency tree is collected by recursively walking outputs from all modified nodes/new links. This also identifies all nodes transitively "involved" in the event as well as leaves (nodes with no downstream nodes).
+
+   In this step, "cycle" links (links that have an output that was an input earlier in the graph) are identified and filtered out. Note that cycles are broken even without this - this is an extra process to avoid links one step earlier (for the "better" feedback loop example again).
+
+2. Using the leaves as roots, do a DFS through inputs. The DFS stops searching whenever it goes out of the "involved" node set or it encounters a node that had already started processing. Link callbacks are called as the DFS unwinds (i.e. after all their dependencies were processed).
+
+3. If a link callback added new links to the graph, repeat (using the existing processed node set).
+
+Re-entrant calls to `eg.event` (i.e. while `eg.event` is executing) are dropped.
+
+### Preventing feedback loops
+
+_Note: This depends on the execution environment, for instance JS doesn't trigger `change` event handlers from code-initiated changes during other event processing. However, GTK executes callbacks immediately when the value is changed and is thus affected._
+
+A common scenario is: you have a textbox, something happens when the value changes, and also an external event (reset button, load button) can cause the value to change and this should be reflected in the textbox. Naively this would end up in an infinite feedback loop.
+
+#### Naive implementation
+
+A straightforward modeling of this scenario is:
+
+- `Prim`, `my_value`
+
+- `link!` (`l1`) from `my_value` with no output that sets the text of the texbox element
+
+- An event handler on the textbox that does `ev.event(|pc| my_value.set(pc, el.value()))`
+
+- An event handler on the reset button that does `ev.event(|pc| my_value.set(pc, original_value.clone()))`
+
+When the reset button is pressed, this is what will execute:
+
+1. The button press handler executes `eg.event` and does `my_value.set`
+
+2. `l1` executes and modifies the textbox element text
+
+3. The textbox change event handler is called, call to `eg.event` is ignored
+
+4. Reached end of graph, `eg.event` ends
+
+However, when the user types into the textbox this is executed:
+
+1. The textbox change event handler executes `eg.event` and does `my_value.set`
+
+2. `l1` executes and modifies the textbox element text
+
+3. The textbox change event handler executes again, call to `eg.event` is ignored
+
+4. Reached end of graph, `eg.event` ends
+
+Per the above, you can see Lunk already implicitly prevents the infinite loop by linearizing the graph before execution.
+
+However, it'll still try to change the value twice - if there were other more intensive or less stable work there it would be run again too.
+
+#### Better implementation
+
+You can avoiding unnecessary work by doing this instead:
+
+- `Prim`, `my_value`
+
+- `Prim`, `textbox_value`
+
+- `link!` (`l1`) from `my_value` to `textbox_value` that does `textbox_raw_value.set(pc, textbox_value.borrow().clone())` and sets the textbox element text
+
+- `link!` (`l2`) from `textbox_value` to `my_value` that does `textbox_value.set(pc, textbox_raw_value.borrow().clone())`
+
+- An event handler on the textbox that does `ev.event(|pc| textbox_value.set(pc, el.value()))`
+
+- An event handler on the reset button that does `ev.event(|pc| my_value.set(pc, original_value))`
+
+When the user types into the textbox, this will now happen:
+
+1. The textbox change event handler executes `eg.event` and does `textbox_value.set`
+
+2. `eg.event` walks `l2`. Then it walks `l1` and sees that the next link after `l1` is `l2` which was an ancestor on this path - so it must be a cycle. `l1` is skipped entirely, and `l2` is identified as "leaf".
+
+3. `l2` executes and modifies the textbox element text
+
+4. The textbox change event handler executes again, and does `textbox_value.set`
+
+5. Reached end of graph, `eg.event` ends
+
 ## Troubleshooting
 
-### Mismatched types; expected fn pointer
+- Mismatched types; expected fn pointer
 
-If you read down, it should say something like "closures can only be coerced to `fn` types if they do not capture any variables". This isn't about wrong types, it's about implicit captures.
+  If you read down, it should say something like "closures can only be coerced to `fn` types if they do not capture any variables". This isn't about wrong types, it's about implicit captures.
 
-All captures in links created with `link!` need to be in one of the `()` at the start.
+  All captures in links created with `link!` need to be in one of the `()` at the start.
 
-In VS Code I need to click the link to see the full error before it shows which value is implicitly captured.
+  In VS Code I need to click the link to see the full error before it shows which value is implicitly captured.
 
-### Unreachable statement
+- Unreachable statement
 
-This occurs when you have an unconditional `return` in your callback. To support short ciruiting `Option` returns via `?`, `link!` adds a `return None` to the end of your function body. If you also return, this `return None` becomes unreachable, hence the alerts.
+  This occurs when you have an unconditional `return` in your callback. To support short ciruiting `Option` returns via `?`, `link!` adds a `return None` to the end of your function body. If you also return, this `return None` becomes unreachable, hence the alerts.
 
-### My callback isn't firing
+- My callback isn't firing
 
-Possible causes
+  Possible causes
 
-- The callback link was dropped or an input/output value captured by weak reference was dropped, or something earlier in the path to this node in the graph was dropped.
+  - The callback link was dropped or an input/output value captured by weak reference was dropped, or something earlier in the path to this node in the graph was dropped.
 
-  Forward references are weak, so each dependent link object needs to be kept around as long as the callback is relevant.
+    Forward references are weak, so each dependent link object needs to be kept around as long as the callback is relevant.
 
-- You set the value but `PartialEq` determined it was equal to the current value
+  - You set the value but `PartialEq` determined it was equal to the current value
 
-  If the value is the same, no updates will occur. This is to prevent unnecessary work when lots of changes are triggered by eliminating unmodified paths, but if you implemented `PartialEq` imprecisely it can prevent legitimate events from being handled.
+    If the value is the same, no updates will occur. This is to prevent unnecessary work when lots of changes are triggered by eliminating unmodified paths, but if you implemented `PartialEq` imprecisely it can prevent legitimate events from being handled.
 
-- You have your capture groups mixed up, and inputs are interpreted as something else (outputs, other captures).
+  - You have your capture groups mixed up, and inputs are interpreted as something else (outputs, other captures).
 
-  If you have the inputs in the wrong macro KV group they won't be acknowledged as a graph connection, so changes to dependencies won't trigger the callback.
+    If you have the inputs in the wrong macro KV group they won't be acknowledged as a graph connection, so changes to dependencies won't trigger the callback.
 
-### My callback is firing (leaked)
+  - You captured the output as a graph-unrelated value instead of using the 3rd `()` in the `link!` macro, so the graph processing doesn't recognize the changes or mis-orders the callback.
 
-Possible causes
+- My callback is firing and it shouldn't be
 
-- The callback captures the item that owns it.  For example, you did `link!` and captured an html element that the `link!` modifies.  You should change the capture to a weak reference.
+  Possible causes
+
+  - The callback captures the item that owns it. For example, you did `link!` and captured an html element that the `link!` modifies, then store the `link!` handle in the html element itself. You should capture the html element by weak reference instead.
 
 # Why flexibility over performance
 
