@@ -125,13 +125,13 @@ impl EventGraph {
     /// the callback.
     ///
     /// If this is called re-entrantly, the latter invocation will be ignored (the
-    /// callback) won't be run.
-    pub fn event(&self, f: impl FnOnce(&mut ProcessingContext)) {
+    /// callback) won't be run and it will return `None`.
+    pub fn event<R>(&self, f: impl FnOnce(&mut ProcessingContext) -> R) -> Option<R> {
         let Ok(mut s) = self.0.try_borrow_mut() else {
-            return;
+            return None;
         };
         if s.processing {
-            return;
+            return None;
         }
 
         // Do initial changes (modifying values, modifying graph)
@@ -253,7 +253,7 @@ impl EventGraph {
             p.clean();
         }
         s.processing = false;
-        return out;
+        return Some(out);
     }
 }
 

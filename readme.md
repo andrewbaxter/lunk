@@ -2,7 +2,7 @@ Lunk is an event graph processing library, typically for chaining callbacks in u
 
 Most web UI frameworks include their own event graph processing tools: Sycamore has signals, Dioxus and others have similar. This is a standalone tool, for use without a framework (i.e. with Gloo and other a la carte tools).
 
-Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance (although it appears to be decently fast anyway).
+Compared to other tools, this library focuses on ease of use, flexibility, and composition with common language structures rather than on performance (although I think it's decently fast anyway).
 
 - You can represent a full graph
 
@@ -28,9 +28,9 @@ Status: MVP
 
 3. Within the event context, create values with `lunk::Prim::new()` and `lunk::List::new()`. Create links to process input changes with `lunk::link!()`.
 
-4. When external events occur, call `eg.event` and modify data values using the associated methods.
+4. When external events occur (e.g. in an event callback), call `eg.event` again and modify data values within that context.
 
-5. At the end of `eg.event` link callbacks will be called for all newly created and downstream links of modified values.
+5. At the end of `eg.event`, the graph is processed and link callbacks will be called for all newly created and downstream links of modified values.
 
 An example:
 
@@ -145,25 +145,33 @@ To do this I made a shared `Option` for holding the return, which is kept alive 
 
 ## How the graph algorithm works
 
-When an event occurs (wrapped by `eg.event`) the code modifies some values (primitives, lists). After this initial event handling finishes, the callback graph is executed.
+When an event occurs (wrapped by `eg.event`) the user's code modifies some values (primitives, lists). After this initial event handling finishes, the callback graph is executed.
 
 The way this happens is as follows:
 
-1. The dependency tree is collected by recursively walking outputs from all modified nodes/new links. This also identifies all nodes transitively "involved" in the event as well as leaves (nodes with no downstream nodes).
+1. The dependency tree is collected by starting at all modified nodes/new links and recursively walking outputs.
 
-   In this step, "cycle" links (links that have an output that was an input earlier in the graph) are identified and filtered out. Note that cycles are broken even without this - this is an extra process to avoid links one step earlier (for the "better" feedback loop example again).
+   In this step, simple "cycle" links (links that have an output that was an input earlier in the graph) are identified and filtered out. Note that cycles are broken even without this - this is an extra process to avoid links one step earlier.
 
-2. Using the leaves as roots, do a DFS through inputs. The DFS stops searching whenever it goes out of the "involved" node set or it encounters a node that had already started processing. Link callbacks are called as the DFS unwinds (i.e. after all their dependencies were processed).
+   Nodes with no downstream links are identified as leaf nodes.
 
-3. If a link callback added new links to the graph, repeat (using the existing processed node set).
+2. Using the leaves as roots, do a DFS backwards through inputs.
+
+   The DFS stops searching whenever it goes out of the "involved" node set or it encounters a node that had already started processing.
+
+   Link callbacks are called as the DFS unwinds (i.e. after all their dependencies were processed).
+
+3. If any callback added new links to the graph, repeat (using the existing processed node set).
 
 Re-entrant calls to `eg.event` (i.e. while `eg.event` is executing) are dropped.
 
 ### Preventing feedback loops
 
-_Note: This depends on the execution environment, for instance JS doesn't trigger `change` event handlers from code-initiated changes during other event processing. However, GTK executes callbacks immediately when the value is changed and is thus affected._
+_Note: If/in which circumstances this happens depends on the execution environment - for instance JS doesn't trigger `change` event handlers from code-initiated changes during other event processing. However, GTK executes callbacks immediately when the value is changed and is thus strongly affected._
 
-A common scenario is: you have a textbox, something happens when the value changes, and also an external event (reset button, load button) can cause the value to change and this should be reflected in the textbox. Naively this would end up in an infinite feedback loop.
+_Note: If feedback happens with a delay, the mechanisms here work since this library only deals with synchronous event handling. In such cases doing time-based debouncing, ignoring same-value changes (maybe with `HistPrim`) or manually, can work._
+
+A common scenario is: you have a textbox, something happens when the value changes, and also an external event (reset button, load button) can cause the value to change and this should be reflected in the textbox. Naively this would end up in an infinite feedback loop, with the value change triggering the value change and the value change updating the textbox.
 
 #### Naive implementation
 
@@ -199,7 +207,7 @@ However, when the user types into the textbox this is executed:
 
 Per the above, you can see Lunk already implicitly prevents the infinite loop by linearizing the graph before execution.
 
-However, it'll still try to change the textbox value - for other inputs this could mess with the cursor position or worse.
+However, it'll still try to change the textbox value - this could mess with the cursor position or disrupt the user experience in other ways (flashing, sluggishness).
 
 #### Better implementation
 
@@ -221,9 +229,9 @@ When the user types into the textbox, this will now happen:
 
 1. The textbox change event handler executes `eg.event` and does `textbox_value.set` which marks `l2` as a processing root
 
-2. `eg.event` walks `l2`. Then it walks `l1` and sees that the next link after `l1` is `l2` which was an ancestor on this path - so it must be a cycle. `l1` is skipped entirely, and `l2` is identified as a "leaf".
+2. `eg.event` walks `l2`. Then it walks `l1` and sees that the next link after `l1` is `l2` which was already seen on this path - so it must be a cycle. `l1` is skipped entirely, and `l2` is identified as a "leaf" (no dependencies).
 
-3. `eg.event` starts doing dependency-first traversal starting at `l2`. Since there's no dependencies, it executes `l2` and the callback sets `my_value`.
+3. `eg.event` starts doing dependency-first traversal starting with leafs, in this case `l2`. It executes `l2` and the callback sets `my_value`.
 
 4. Reached end of graph, `eg.event` ends
 
@@ -275,18 +283,10 @@ Some event graph implementations attach the callbacks directly to data values an
 
 In Lunk, by separating the value and link, the data types can be simple while the complexity is kept in the links. I think this makes ownership and lifetimes simpler - for instance, you won't accidentally keep listeners around just by storing a value.
 
-This also supports many configurations with only a few functions/macros: value that's manually triggered not computed, a value that's computed from other values, and a computation that doesn't output a value.
-
-## Requiring the user to specify the output type in the macro
-
-The macro lacks the ability to detect the output type where it's needed.
-
-I could have used template magic to infer the type, but this would have made manual (macro-less) link implementations need more boilerplate, so I decided against it. The types are fairly simple so I don't think it's a huge downside.
+This also supports many configurations with only a few functions/macros like a value that's manually triggered not computed, a value that's computed from other values, or a computation that doesn't output a value.
 
 ## Animations as a separate structure
 
 In true a la carte philosophy, I figured some people might not want animations and it wasn't hard to make entirely separate.
-
-If you use this, I think bundling the animator with the processing context shouldn't be too hard.
 
 In case someone wants implements similar functionality as a 3rd party, the 1st party implementation only uses public interfaces so users should be able to freely choose a better solution.
