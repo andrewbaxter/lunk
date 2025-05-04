@@ -57,7 +57,7 @@ struct List_<T: Clone> {
 }
 
 impl<T: Clone> ValueTrait for List_<T> {
-    fn next(&self) -> Vec<crate::Link> {
+    fn next_links(&self) -> Vec<crate::Link> {
         return self.mut_.borrow_mut().next();
     }
 }

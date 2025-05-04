@@ -40,7 +40,7 @@ pub(crate) struct Prim_<T> {
 }
 
 impl<T> ValueTrait for Prim_<T> {
-    fn next(&self) -> Vec<crate::Link> {
+    fn next_links(&self) -> Vec<crate::Link> {
         let mut out = vec![];
         let mut self2 = self.mut_.borrow_mut();
         out.reserve(self2.next.len());
@@ -104,7 +104,7 @@ impl<T: 'static> Prim<T> {
         if first_change {
             pc.1.cleanup.push(self.0.clone());
             if !pc.1.processing {
-                for l in self.0.next() {
+                for l in self.0.next_links() {
                     pc.1.step1_stacked_links.push((true, l));
                 }
             }
@@ -157,7 +157,7 @@ pub(crate) struct HistPrim_<T: PartialEq + Clone> {
 }
 
 impl<T: PartialEq + Clone> ValueTrait for HistPrim_<T> {
-    fn next(&self) -> Vec<crate::Link> {
+    fn next_links(&self) -> Vec<crate::Link> {
         let mut out = vec![];
         let mut self2 = self.mut_.borrow_mut();
         out.reserve(self2.next.len());
@@ -231,7 +231,7 @@ impl<T: PartialEq + Clone + 'static> HistPrim<T> {
         if first_change {
             pc.1.cleanup.push(self.0.clone());
             if !pc.1.processing {
-                for l in self.0.next() {
+                for l in self.0.next_links() {
                     pc.1.step1_stacked_links.push((true, l));
                 }
             }

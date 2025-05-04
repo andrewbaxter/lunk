@@ -1,13 +1,15 @@
-use std::{
-    rc::{
-        Rc,
-    },
-    cell::{
-        RefCell,
-    },
-    collections::{
-        HashMap,
-        HashSet,
+use {
+    std::{
+        rc::{
+            Rc,
+        },
+        cell::{
+            RefCell,
+        },
+        collections::{
+            HashMap,
+            HashSet,
+        },
     },
 };
 
@@ -17,7 +19,7 @@ pub type Id = usize;
 pub const NULL_ID: Id = 0;
 
 pub trait ValueTrait {
-    fn next(&self) -> Vec<Link>;
+    fn next_links(&self) -> Vec<Link>;
 }
 
 pub struct Value(pub(crate) Rc<dyn ValueTrait>);
@@ -37,7 +39,7 @@ pub trait LinkTrait {
     fn call(&self, pc: &mut ProcessingContext);
 
     /// Returns outputs (downstream values; as `Value` trait for generic processing).
-    fn next(&self) -> Vec<Value>;
+    fn next_values(&self) -> Vec<Value>;
 }
 
 pub(crate) struct Link_ {
@@ -127,6 +129,14 @@ impl EventGraph {
     /// If this is called re-entrantly, the latter invocation will be ignored (the
     /// callback) won't be run and it will return `None`.
     pub fn event<R>(&self, f: impl FnOnce(&mut ProcessingContext) -> R) -> Option<R> {
+        // On the graph algorithm, and cycles:
+        //
+        // We start at links and not nodes because we want to trigger from newly added
+        // links, whether or not the node is new or not (so links must be tracked
+        // independently from nodes).
+        //
+        // This works well with our definition of a cycle, which is a link that leads to a
+        // link that was already run (via some node).
         let Ok(mut s) = self.0.try_borrow_mut() else {
             return None;
         };
@@ -161,7 +171,7 @@ impl EventGraph {
 
             let mut path_stack: Vec<Step1PathEntry> = vec![];
             s.step1_stacked_links.reverse();
-            while let Some((first, link)) = s.step1_stacked_links.pop() {
+            'stack_next: while let Some((first, link)) = s.step1_stacked_links.pop() {
                 if first {
                     // Merging paths, don't reprocess
                     if !involved_links.insert(link.0.id) {
@@ -169,49 +179,38 @@ impl EventGraph {
                     }
 
                     // Classify by being a cycle link or not
-                    let mut has_outputs = false;
-                    let mut noncycle_outputs = vec![];
-                    for next_val in link.0.inner.next() {
-                        'links: for next_link in next_val.0.next() {
-                            has_outputs = true;
-
+                    let mut outputs = vec![];
+                    for next_val in link.0.inner.next_values() {
+                        for next_link in next_val.0.next_links() {
                             // Check if next link makes a cycle and skip
                             for path_entry in &path_stack {
                                 if path_entry.link.0.id == next_link.0.id {
-                                    continue 'links;
+                                    continue 'stack_next;
                                 }
                             }
 
                             // Not a cycle
-                            noncycle_outputs.push(next_link.clone());
+                            outputs.push(next_link.clone());
                         }
                     }
+                    if let Some(parent) = path_stack.last_mut() {
+                        // Add as upstream dep from parent Update parent stats
+                        parent.downstream += 1;
+                    }
 
-                    // Act by classification
-                    if has_outputs && noncycle_outputs.is_empty() {
-                        // This is a cycle link (primary purpose is to feed back into already processed
-                        // value) - skip it
-                    } else {
-                        // This is a non-cycle link, involve in graph as normal
-                        if let Some(parent) = path_stack.last_mut() {
-                            // Add as upstream dep from parent Update parent stats
-                            parent.downstream += 1;
-                        }
+                    // Stack 2nd pass
+                    s.step1_stacked_links.push((false, link.clone()));
 
-                        // Stack 2nd pass
-                        s.step1_stacked_links.push((false, link.clone()));
+                    // Stack parent info
+                    path_stack.push(Step1PathEntry {
+                        link: link.clone(),
+                        downstream: 0,
+                    });
 
-                        // Stack parent info
-                        path_stack.push(Step1PathEntry {
-                            link: link.clone(),
-                            downstream: 0,
-                        });
-
-                        // Stack children and establish child dependencies
-                        for next_link in noncycle_outputs {
-                            step2_upstream_dep_tree.entry(next_link.0.id).or_default().insert(link.clone());
-                            s.step1_stacked_links.push((true, next_link));
-                        }
+                    // Stack children and establish child dependencies
+                    for next_link in outputs {
+                        step2_upstream_dep_tree.entry(next_link.0.id).or_default().insert(link.clone());
+                        s.step1_stacked_links.push((true, next_link));
                     }
                 } else {
                     // Unwind - use post-processing stats to determine if leaf (by real downstream)

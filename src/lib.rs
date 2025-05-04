@@ -88,7 +88,7 @@ macro_rules! link{
                 //. x
                 $([< _ $output_name: upper >],) * 
                 //. x
-                $([< _ $name: upper >],) *
+                $([< _ $name: upper >],) * 
                 //. _
                 > {
                     //. x
@@ -115,7 +115,7 @@ macro_rules! link{
                 //. x
                 $([< _ $output_name: upper >]: Clone + $crate:: core:: IntoValue,) * 
                 //. x
-                $([< _ $name: upper >],) *
+                $([< _ $name: upper >],) * 
                 //. _
                 > $crate:: core:: LinkTrait for _Link < 
                 //. x
@@ -123,7 +123,7 @@ macro_rules! link{
                 //. x
                 $([< _ $output_name: upper >],) * 
                 //. x
-                $([< _ $name: upper >],) *
+                $([< _ $name: upper >],) * 
                 //. _
                 > {
                     fn call(&self, pc:& mut $crate:: core:: ProcessingContext) {
@@ -135,7 +135,7 @@ macro_rules! link{
                             //. .
                             $(& self.[< _ $name >],) *);
                     }
-                    fn next(&self) -> std:: vec:: Vec < $crate:: core:: Value > {
+                    fn next_values(&self) -> std:: vec:: Vec < $crate:: core:: Value > {
                         return vec![
                             $(< dyn $crate:: core:: IntoValue >:: into_value(& self.[< _ $output_name >]),) *
                         ];
@@ -160,7 +160,7 @@ macro_rules! link{
                     //. .
                     $($output_name,) * 
                     //. .
-                    $($name,) *
+                    $($name,) * 
                     //. .
                     |-> Option <() > {
                         $body;
@@ -208,7 +208,7 @@ fn basic0() {
                 self.value.set(pc, *a.borrow() + 5);
             }
 
-            fn next(&self) -> Vec<Value> {
+            fn next_values(&self) -> Vec<Value> {
                 return vec![Value(self.value.0.clone())];
             }
         }
